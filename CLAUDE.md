@@ -1061,13 +1061,61 @@ confirmation dialog on unlock.
   the earlier estimate — use the table value, not the old 4x-guess.
 
 ## Backlog (not yet started)
-Nothing currently open — both items raised 2026-08-22 (Advanced Settings
-accordion, experimental time-optimized packing model) shipped 2026-08-23;
-see `index.html`'s Advanced Settings entry under Pages and "Core logic"'s
-experimental time-optimized packing section below. A future "no EMP"
-toggle alongside "Skip Glass Cutter prep" was floated but not designed or
-built — no slot reserved for it in the accordion's markup, just a
-plausible next entry if it's ever picked up.
+The Advanced Settings accordion and experimental time-optimized packing
+model, both raised 2026-08-22, shipped 2026-08-23 — see `index.html`'s
+Advanced Settings entry under Pages and "Core logic"'s experimental
+time-optimized packing section below. A future "no EMP" toggle alongside
+"Skip Glass Cutter prep" was floated but not designed or built — no slot
+reserved for it in the accordion's markup, just a plausible next entry if
+it's ever picked up. A shutter-duty hard constraint and a suggested
+floor-visit-order display, plus a same-day elevator-access correction to
+`exhibitTravelCost()` (First/Second only, later widened to include Crisp
+Gallery since it's physically the same floor as Second), were designed
+and built 2026-08-24/2026-08-30 but kept on the
+`feature/time-model-shutter-and-routing` branch rather than merged —
+only the isolated `exhibitTravelCost()` bug fix itself landed on `main`.
+See that branch's own CLAUDE.md for the full design writeup; the reason
+it wasn't merged (a real-playthrough comparison surfaced that the
+time-model has no job/role assignment) is item 6 below.
+
+**Five items raised 2026-08-30, ranked by effort (also tracked in local
+Claude Code memory — see `project_backlog_priority_ranking` and the
+items it links to for full design detail):**
+
+1. **Add the existing "Copy as CSV" scope-export button to `guide.html`
+   too** (currently `index.html`-only) — trivial, zero `kch-model.js`
+   changes, pure UI duplication of an existing button.
+2. **A separate "Copy as CSV" for the Crew Size Comparison table** —
+   very small, one new pure function mirroring `buildScopeCsv()` plus a
+   new button; not merged into the existing scope export (that's part of
+   why a similar-looking change in PR #4 was rejected — see that PR's
+   review comments).
+3. **A shareable read-only link to a scope-out**, for handing teammates
+   the shopping list/maps without screenshotting — fully designed
+   (plaintext delimited URL encoding, no JSON/base64/dependencies, no
+   player names, read-only render on open, buttons on both `guide.html`
+   and `map-view.html`), zero open questions, ready to build.
+4. **A clickable "best value" figure on the Crew Size Comparison panel**
+   to switch the run to that player count — 4 open design questions
+   still need a discussion pass first (persist vs. preview `state.players`,
+   whether a With-Elite click also flips `state.elite`, confirm dialog or
+   not, which cells are clickable).
+5. **An Advanced Settings "Clear 1F and Alarm before vault?" toggle** —
+   floated with real rationale (skill/risk tradeoff between the two
+   orderings) but no mechanism designed yet for how it changes
+   `packBinsForTime()`'s cost model.
+6. **No job/role assignment in the time model** — the time-optimized
+   packing conflates "which bag an item's value is attributed to" with
+   "which player travels to grab it," and has no concept of task
+   sequencing/sync points (the Vault as a convergence point, EMP timing,
+   before/after-vault staging). A referenced independent calculator
+   ("Maze") reportedly does model this. The real fix for item 5 above,
+   but a substantially bigger redesign — recommended to design 5 and 6
+   together rather than separately, since 5 is really a scoped-down
+   piece of 6's larger problem.
+
+Recommended build order: 1 → 2 → 3, then a design pass for 4, then 5 and
+6 together.
 
 ## Stack
 Plain HTML/CSS/JS, no build step. Deploys as-is to GitHub Pages. The only
