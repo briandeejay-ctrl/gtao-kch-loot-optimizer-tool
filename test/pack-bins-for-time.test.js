@@ -135,9 +135,22 @@ test('exhibitTravelCost: a non-adjacent floor pair costs strictly more than an a
   assert.ok(nonAdjacent > adjacent);
 });
 
-test('exhibitTravelCost: a single floor or empty set costs zero', () => {
+test('exhibitTravelCost: an empty set, or a lone elevator-served floor, costs zero', () => {
   assert.equal(exhibitTravelCost(new Set()), 0);
   assert.equal(exhibitTravelCost(new Set(['First'])), 0);
+  assert.equal(exhibitTravelCost(new Set(['Second'])), 0);
+  // Crisp Gallery is physically the same floor as Second, so it's free
+  // too, unlike Alarm Floor (see the next test).
+  assert.equal(exhibitTravelCost(new Set(['Crisp Gallery'])), 0);
+});
+
+// Fix: the elevator only serves First and Second from the basement
+// (confirmed with the user) — Alarm Floor is a real separate level, so a
+// lone bag there is never actually free to reach. This was a real bug in
+// the old `floors.length <= 1 -> return 0` special case, silently
+// under-pricing an Alarm-Floor-only bag by a full hop.
+test('exhibitTravelCost: a lone Alarm Floor costs one real hop, not zero, since it is not an elevator stop', () => {
+  assert.equal(exhibitTravelCost(new Set(['Alarm Floor'])), 5); // 1 hop to First
 });
 
 test('exhibitTravelCost: all four exhibit floors together cost exactly 15 (a 3-hop star through First, scaled by FLOOR_TRANSITION_COST)', () => {

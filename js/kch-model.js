@@ -696,6 +696,16 @@ function shortestFloorDistance(a, b) {
   return Infinity; // never reached for two exhibit floors — the exhibit subgraph is fully connected through First
 }
 
+// ELEVATOR_FLOORS: exhibit floors that are free to reach from the
+// Vault/basement level — either a real elevator stop, or co-located with
+// one. The elevator only serves 'First' and 'Second' from the basement;
+// 'Crisp Gallery' is physically the same floor as 'Second' (see
+// floorMaps in data/secondary-loot.json, which already shares one map
+// image between them), just a different room, so reaching it after
+// riding the elevator to 'Second' is free too. 'Alarm Floor' is a real,
+// separate level and is the only one that isn't free to enter.
+const ELEVATOR_FLOORS = new Set(['First', 'Second', 'Crisp Gallery']);
+
 // True minimal cost to route through every floor in `floorSet` (a Set of
 // exhibit-floor names) — the MST weight over the complete graph of
 // pairwise shortest-path distances between them, NOT a flat "distinct
@@ -708,9 +718,26 @@ function shortestFloorDistance(a, b) {
 // 2026-08-23 — the user confirmed a real transition costs much closer to
 // a glass-cutter item's time, so it's scaled up to match rather than
 // silently under-weighted against item time-costs).
+//
+// A single floor is free ONLY if it's elevator-served (fix — the
+// `floors.length <= 1 -> return 0` special case originally applied to
+// ANY lone floor, wrongly treating a lone Alarm-Floor-only bag as free
+// to reach when it actually costs one real hop in). The `floors.length
+// >= 2` branch below needs no corresponding change: with only 1 exhibit
+// floor (Alarm Floor) ever unserved, no 2+-floor subset can lack a
+// served floor at all — a subset of size 2+ either is all-served, or
+// pairs Alarm Floor with at least one served floor. The only floor set
+// that can lack a served floor is the singleton {Alarm Floor} itself,
+// handled below.
 export function exhibitTravelCost(floorSet) {
   const floors = [...floorSet];
-  if (floors.length <= 1) return 0;
+  if (floors.length === 0) return 0;
+  if (floors.length === 1) {
+    const [only] = floors;
+    if (ELEVATOR_FLOORS.has(only)) return 0;
+    const nearest = Math.min(...[...ELEVATOR_FLOORS].map(f => shortestFloorDistance(only, f)));
+    return nearest * FLOOR_TRANSITION_COST;
+  }
   const inTree = new Set([floors[0]]);
   let total = 0;
   while (inTree.size < floors.length) {
