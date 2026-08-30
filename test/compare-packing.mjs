@@ -103,6 +103,16 @@ function printRun(label, r) {
       }
     }
   });
+  if (Number.isInteger(r.shutterOperatorIndex)) {
+    console.log(`  🔑 Suggested for shutters: Player ${r.shutterOperatorIndex + 1} (guaranteed low-cost First Floor access)`);
+  }
+  if (Array.isArray(r.floorRoutes)) {
+    r.floorRoutes.forEach((route, i) => {
+      if (route && route.length >= 2) {
+        console.log(`  🧭 Player ${i + 1} suggested order: ${route.join(' → ')}`);
+      }
+    });
+  }
 }
 
 const defaultResult = runOptimizer(buildState(false), catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);

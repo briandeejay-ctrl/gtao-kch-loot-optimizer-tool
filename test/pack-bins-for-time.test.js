@@ -135,9 +135,36 @@ test('exhibitTravelCost: a non-adjacent floor pair costs strictly more than an a
   assert.ok(nonAdjacent > adjacent);
 });
 
-test('exhibitTravelCost: a single floor or empty set costs zero', () => {
+test('exhibitTravelCost: an empty set, or a lone elevator-served floor, costs zero', () => {
   assert.equal(exhibitTravelCost(new Set()), 0);
   assert.equal(exhibitTravelCost(new Set(['First'])), 0);
+  assert.equal(exhibitTravelCost(new Set(['Second'])), 0);
+});
+
+// 2026-08-24 fix: the elevator only serves First and Second (confirmed
+// with the user) — Alarm Floor is NOT an elevator stop, so a lone bag
+// there is never actually free to reach. This was a real pre-existing
+// bug in the `floors.length <= 1 -> return 0` special case (shipped
+// 2026-08-23, a day before this fix), silently under-pricing an
+// Alarm-Floor-only bag by a full hop. See ELEVATOR_FLOORS's doc comment
+// in kch-model.js for the exhaustive proof this is the ONLY case that
+// still needs this treatment (Crisp Gallery no longer does — see the
+// next test).
+test('exhibitTravelCost: a lone Alarm Floor costs one real hop, not zero, since it is not an elevator stop', () => {
+  assert.equal(exhibitTravelCost(new Set(['Alarm Floor'])), 5); // 1 hop to First
+});
+
+// 2026-08-30 follow-up, same real-playthrough comparison session: Crisp
+// Gallery is physically the same floor as Second (see floorMaps in
+// data/secondary-loot.json, which already shares one map image between
+// them) — just a different room, so reaching it after riding the
+// elevator to Second is genuinely free, unlike Alarm Floor, which is a
+// real separate level. The 2026-08-24 fix above was correct that "any
+// lone floor is free" was wrong, but had lumped Crisp Gallery in with
+// Alarm Floor as if both were real separate levels — this narrows that
+// back to just Alarm Floor.
+test('exhibitTravelCost: a lone Crisp Gallery costs zero, since it is co-located with the elevator-served Second floor', () => {
+  assert.equal(exhibitTravelCost(new Set(['Crisp Gallery'])), 0);
 });
 
 test('exhibitTravelCost: all four exhibit floors together cost exactly 15 (a 3-hop star through First, scaled by FLOOR_TRANSITION_COST)', () => {
@@ -198,9 +225,15 @@ test('runOptimizer: skipPreps excludes the 5 glass-cutter items from selection e
 
 // Fuzz: across random scope-outs, experimentalPacking must never overflow
 // a bag and must never change total secondary value or item selection —
-// mirrors the existing fuzz test in test/pack-bins.test.js.
+// mirrors the existing fuzz test in test/pack-bins.test.js. Also asserts
+// the shutter-duty invariant proved in the 2026-08-24 design session:
+// whenever Crisp Gallery is packed and there's more than one bag,
+// shutterOperatorIndex must always be a valid non-host bin index — never
+// null, never 0 — for any packable input (see packBinsForTime()'s own
+// doc comment for the proof this relies on).
 test('fuzz: experimentalPacking never overflows a bag and never changes value/selection vs the default split', () => {
   let checked = 0;
+  let shutterChecked = 0;
   for (let trial = 0; trial < 300; trial++) {
     const players = 1 + Math.floor(Math.random() * 4); // 1..4
     const elite = Math.random() < 0.5 ? 'yes' : 'no';
@@ -235,6 +268,93 @@ test('fuzz: experimentalPacking never overflows a bag and never changes value/se
       [...defaultResult.chosenIds].sort(),
       `trial ${trial}: item selection must be unchanged`
     );
+
+    const packsCrispGallery = experimentalResult.chosenIds &&
+      [...experimentalResult.chosenIds].some(id => itemById(catalog, id).floor === 'Crisp Gallery');
+    if (packsCrispGallery && players >= 2) {
+      shutterChecked++;
+      // Null is still a legitimate outcome here, distinct from the
+      // shutter-duty search itself failing (proven unreachable — see
+      // packBinsForTime()'s doc comment): packBinsForTime() can return
+      // null ENTIRELY on rare inputs where phase 1's Vault/Loading-Bay
+      // host-avoidance starves phase 2's remaining capacity (a separate,
+      // pre-existing, already-documented limitation) — runOptimizer()
+      // then falls back to the default (non-time-optimized) split, for
+      // which shutterOperatorIndex is correctly null (no time-optimized
+      // split exists for the guarantee to apply to). What must never
+      // happen is host (0) or an out-of-range index.
+      assert.ok(
+        experimentalResult.shutterOperatorIndex === null || (
+          Number.isInteger(experimentalResult.shutterOperatorIndex) &&
+          experimentalResult.shutterOperatorIndex >= 1 &&
+          experimentalResult.shutterOperatorIndex < players
+        ),
+        `trial ${trial}: shutterOperatorIndex must be null or a valid non-host index, got ${experimentalResult.shutterOperatorIndex}`
+      );
+    } else {
+      assert.equal(experimentalResult.shutterOperatorIndex, null, `trial ${trial}: shutterOperatorIndex must be null when Crisp Gallery isn't packed`);
+    }
   }
   assert.ok(checked > 0);
+  assert.ok(shutterChecked > 0, 'expected at least one trial to actually exercise the shutter-duty path');
+});
+
+// tMax bound regression (2026-08-24): a single bin legitimately spanning
+// all 4 exhibit floors, each item weighted at the top of the real
+// lootTimeWeight scale. Total time-weight (20) + full-4-floor travel (15)
+// = 35, which the old hardcoded "+3" bound (yielding a scan ceiling of
+// only 23) would have missed entirely, causing packBinsForTime() to
+// return null even though a feasible (indeed the only possible) packing
+// exists. bins=1 deliberately keeps the shutter-duty constraint (which
+// needs bins >= 2) out of this test, isolating the tMax fix itself.
+test('tMax bound regression: a single bin spanning all 4 exhibit floors at max time-weight is still found, not null', () => {
+  const items = [
+    { id: 'alarm', value: 10000, weightUnits: 10, floor: 'Alarm Floor', timeWeight: 5, order: 0 },
+    { id: 'first', value: 10000, weightUnits: 10, floor: 'First', timeWeight: 5, order: 1 },
+    { id: 'second', value: 10000, weightUnits: 10, floor: 'Second', timeWeight: 5, order: 2 },
+    { id: 'crisp', value: 10000, weightUnits: 10, floor: 'Crisp Gallery', timeWeight: 5, order: 3 }
+  ];
+  const result = packBinsForTime(items, 1, 100);
+  assert.ok(result, 'must not return null — the old hardcoded +3 tMax bound would have missed the true minimum of 35');
+  const cost = binTimeCost({ items: result.bags[0].items.map(i => ({ floor: i.floor, timeWeight: 5 })) });
+  assert.equal(cost, 35, 'the only possible packing (all 4 items, all 4 floors, in the single bin) costs exactly 35');
+});
+
+// Shutter-duty gate: no Crisp Gallery item packed -> shutterOperatorIndex
+// stays null and behavior is otherwise identical to running the function
+// with no shutter logic at all (there's nothing gating Crisp Gallery
+// access to open this run, so there's no reason to force anyone through
+// First Floor for it).
+test('shutter-duty gate: no Crisp Gallery item packed leaves shutterOperatorIndex null', () => {
+  const items = [
+    { id: 'alarm', value: 10000, weightUnits: 10, floor: 'Alarm Floor', timeWeight: 2, order: 0 },
+    { id: 'first', value: 10000, weightUnits: 10, floor: 'First', timeWeight: 2, order: 1 }
+  ];
+  const result = packBinsForTime(items, 2, 100);
+  assert.ok(result);
+  assert.equal(result.shutterOperatorIndex, null);
+});
+
+// Shutter-duty: Crisp Gallery packed, feasible non-host assignment exists
+// -> shutterOperatorIndex is a real, non-host bin index, and that bin
+// genuinely ends up with First Floor presence (a real item here, not just
+// the virtual seed, since nothing forces the two to diverge in this
+// fixture) at zero marginal travel cost.
+test('shutter-duty: designates a non-host bin with genuine First Floor presence', () => {
+  const items = [
+    { id: 'crisp', value: 1000, weightUnits: 10, floor: 'Crisp Gallery', timeWeight: 3, order: 0 },
+    { id: 'first', value: 1000, weightUnits: 10, floor: 'First', timeWeight: 3, order: 1 },
+    { id: 'second', value: 1000, weightUnits: 80, floor: 'Second', timeWeight: 1, order: 2 }
+  ];
+  const result = packBinsForTime(items, 3, 100);
+  assert.ok(result);
+  assert.ok(
+    Number.isInteger(result.shutterOperatorIndex) && result.shutterOperatorIndex >= 1,
+    'shutterOperatorIndex must be a non-host bin index'
+  );
+  const shutterBag = result.bags[result.shutterOperatorIndex];
+  const floors = new Set(shutterBag.items.map(i => i.floor));
+  assert.ok(floors.has('First'), 'the designated shutter bin should end up with genuine First Floor presence in this fixture');
+  const marginal = exhibitTravelCost(new Set([...floors, 'First'])) - exhibitTravelCost(floors);
+  assert.equal(marginal, 0, 'adding First Floor to its own floor set must cost nothing — it is already present');
 });

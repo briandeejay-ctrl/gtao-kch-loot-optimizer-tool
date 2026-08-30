@@ -696,6 +696,22 @@ function shortestFloorDistance(a, b) {
   return Infinity; // never reached for two exhibit floors — the exhibit subgraph is fully connected through First
 }
 
+// ELEVATOR_FLOORS: the exhibit floors that are free to reach from the
+// Vault/basement level — either a real elevator stop, or co-located with
+// one. 2026-08-24: confirmed the elevator only serves 'First' and
+// 'Second' from the basement; an earlier version of this feature (and
+// exhibitTravelCost() itself, shipped a day before that fix) wrongly
+// assumed ANY single exhibit floor was a free drop-off point, which was
+// wrong for 'Alarm Floor' and 'Crisp Gallery' alike. 2026-08-30 (same
+// day as a real-playthrough comparison session): corrected again —
+// 'Crisp Gallery' is physically the same floor as 'Second' (see
+// floorMaps in data/secondary-loot.json, which already shares one map
+// image between them), just a different room, so reaching it after
+// riding the elevator to 'Second' is genuinely free too, unlike 'Alarm
+// Floor', which is a real separate level. Only 'Alarm Floor' remains
+// unserved.
+const ELEVATOR_FLOORS = new Set(['First', 'Second', 'Crisp Gallery']);
+
 // True minimal cost to route through every floor in `floorSet` (a Set of
 // exhibit-floor names) — the MST weight over the complete graph of
 // pairwise shortest-path distances between them, NOT a flat "distinct
@@ -708,9 +724,27 @@ function shortestFloorDistance(a, b) {
 // 2026-08-23 — the user confirmed a real transition costs much closer to
 // a glass-cutter item's time, so it's scaled up to match rather than
 // silently under-weighted against item time-costs).
+//
+// A single floor is free ONLY if it's elevator-served (2026-08-24 fix —
+// the `floors.length <= 1 -> return 0` special case originally applied
+// to ANY lone floor, which was wrong for Alarm Floor/Crisp Gallery; see
+// ELEVATOR_FLOORS above). The `floors.length >= 2` branch below needed NO
+// change for either elevator correction, then or on 2026-08-30's Crisp
+// Gallery follow-up: with only 4 exhibit floors and now only 1 of them
+// (Alarm Floor) unserved, no 2+-floor subset can ever lack a served floor
+// at all — any subset of size 2+ either consists entirely of served
+// floors, or pairs Alarm Floor with at least one. The only floor set that
+// could ever lack a served floor is the singleton {Alarm Floor} itself,
+// already handled above.
 export function exhibitTravelCost(floorSet) {
   const floors = [...floorSet];
-  if (floors.length <= 1) return 0;
+  if (floors.length === 0) return 0;
+  if (floors.length === 1) {
+    const [only] = floors;
+    if (ELEVATOR_FLOORS.has(only)) return 0;
+    const nearest = Math.min(...[...ELEVATOR_FLOORS].map(f => shortestFloorDistance(only, f)));
+    return nearest * FLOOR_TRANSITION_COST;
+  }
   const inTree = new Set([floors[0]]);
   let total = 0;
   while (inTree.size < floors.length) {
@@ -737,18 +771,164 @@ const TRAVEL_COST_BY_MASK = Array.from({ length: 1 << EXHIBIT_FLOOR_LIST.length 
   return exhibitTravelCost(new Set(floors));
 });
 
+// deriveFloorRoute(floorSet, preferredRoot) — suggested walkable visit
+// order for one player's exhibit floors, added 2026-08-24 alongside the
+// "Experimental: time-optimized packing" display in guide.html. Display
+// only: never called from packBinsForTime()'s search, never changes a
+// bag/value decision, and total travel cost is unaffected by which floor
+// gets picked as the root — a real MST's total weight is invariant to
+// its start node, so forcing a specific root here can never contradict
+// exhibitTravelCost()'s already-computed number for the same floorSet.
+//
+// Deliberately a separate function from exhibitTravelCost() rather than
+// a shared refactor: that function sits in packBinsForTime()'s hot
+// search path (backed by the precomputed TRAVEL_COST_BY_MASK above) and
+// already has passing test coverage, so it's left completely untouched.
+// This one is only ever called a handful of times per optimizer run (once
+// per bin), so duplicating the small greedy-nearest growth loop here is
+// deliberate, not laziness.
+//
+// A real subtlety, found while designing this (not a naive port of
+// exhibitTravelCost()'s insertion order): the MST can BRANCH, and a
+// branch can be more than one level deep. With all 4 exhibit floors in
+// one bin, First is exactly 1 hop from each of Alarm Floor/Second/Crisp
+// Gallery, so the true MST is often star-shaped (First is the hub, the
+// other three are its direct children) — not a single path. A flat
+// "order floors were added in" list would silently claim Alarm Floor ->
+// Second is a direct next step, when it actually requires walking back
+// through First. Worse: for some roots the branch itself sits below a
+// non-root floor (e.g. root Second, with First -> Alarm two levels
+// down) — a naive "push the immediate branch floor and move on" backtrack
+// would then skip First entirely on the way back from Alarm, the same
+// false-adjacency bug one level removed. Fixed by tracking real parent
+// pointers during the same greedy-nearest growth exhibitTravelCost()
+// uses, then DFS-walking that tree from the resolved root, and on
+// finishing each child subtree (when a sibling remains) walking back up
+// the ACTUAL parent chain one real floor at a time rather than jumping
+// straight to the branch point — e.g.
+// ['Second','First','Alarm Floor','First','Second','Crisp Gallery'] for
+// the two-level case above, never a shortcut. Honest about the real
+// trip, in the same spirit exhibitTravelCost() already applies by never
+// under-counting a 2-hop detour through an unlooted floor as a 1-hop
+// direct step.
+//
+// Known, deliberately out-of-scope-for-this-pass simplification: because
+// exhibitTravelCost() charges each MST edge once (a real tree has N-1
+// paid edges for N floors), a genuinely branching route's total DISPLAYED
+// bottleneck cost is a one-way spanning total, not the real round-trip
+// distance a player walks once they have to backtrack to reach a second
+// branch — the route above, once fully retraced, is 5 real hops (25),
+// while its floor set's exhibitTravelCost() total is only 3 edges (15).
+// This was already true before this function existed; making the route
+// honest about backtracks just makes the gap visible for the first time.
+// Not fixed here per the approved plan (exhibitTravelCost() itself stays
+// untouched) — flagged as a real, quantifiable follow-up if branching
+// routes turn out to be common enough in practice to matter.
+//
+// Root resolution: `preferredRoot` if it's actually present in
+// floorSet, else the first EXHIBIT_FLOOR_LIST entry present in
+// floorSet — never arbitrary Set-iteration order, so results are
+// reproducible. Returns [] for an empty floorSet, [floor] for a single
+// elevator-served floor (nothing to order, no backtrack possible) —
+// otherwise see the implicit-elevator-entry note below.
+//
+// 2026-08-24 correction, narrowed 2026-08-30 once Crisp Gallery joined
+// ELEVATOR_FLOORS: if `floorSet` is drawn entirely from non-elevator-
+// served floors — in practice this can now only ever mean the singleton
+// {Alarm Floor}, since Crisp Gallery no longer qualifies — the player's
+// real first step is an implicit trip through the nearest elevator
+// floor, so it's prepended before anything else runs. `'First'` is
+// hardcoded as that implicit floor rather than computed generically
+// (Alarm Floor is 1 hop from First, 2 from Second, so First always
+// wins). This overrides any requested `preferredRoot` — a root that
+// isn't reachable for free was never a valid "free first stop" to begin
+// with. A lone Alarm Floor route grows from a 1-element ("nothing to
+// show") route to a real 2-element one, `['First', 'Alarm Floor']` — a
+// lone Crisp Gallery route no longer needs this at all, since it's
+// elevator-served like First/Second now (`['Crisp Gallery']` stands on
+// its own). Callers that gate display on `route.length >= 2`
+// (guide.html) need no change either way: this is exactly the "something
+// worth telling the player" case that gate already exists for.
+export function deriveFloorRoute(floorSet, preferredRoot) {
+  let floors = [...floorSet];
+  if (floors.length === 0) return [];
+
+  if (!floors.some(f => ELEVATOR_FLOORS.has(f))) {
+    floors = ['First', ...floors];
+    preferredRoot = 'First';
+  }
+
+  if (floors.length === 1) return floors.slice();
+
+  const root = (preferredRoot && floors.includes(preferredRoot))
+    ? preferredRoot
+    : EXHIBIT_FLOOR_LIST.find(f => floors.includes(f));
+
+  // Greedy-nearest MST growth, same shape as exhibitTravelCost(), but
+  // tracking each newly-added floor's parent (its nearest already-in-tree
+  // neighbor) instead of just a running total.
+  const parent = new Map();
+  const inTree = new Set([root]);
+  while (inTree.size < floors.length) {
+    let best = null;
+    for (const a of inTree) {
+      for (const b of floors) {
+        if (inTree.has(b)) continue;
+        const d = shortestFloorDistance(a, b);
+        if (!best || d < best.d) best = { floor: b, parent: a, d };
+      }
+    }
+    parent.set(best.floor, best.parent);
+    inTree.add(best.floor);
+  }
+
+  // Build an adjacency list of the resulting tree, then DFS from root. On
+  // finishing a child's whole subtree, if another sibling remains, walk
+  // BACK UP THE REAL TREE PATH to this branch point one floor at a time
+  // (via `parent`) rather than jumping straight back — a subtree can be
+  // more than one level deep (e.g. root Second, with First -> Alarm two
+  // levels down), and pushing just the immediate branch floor would
+  // silently skip First on the way back from Alarm, falsely implying
+  // Alarm and Second are directly adjacent when they're really 2 hops
+  // apart. visit() returns the last floor actually reached (the deepest
+  // node of its subtree), so the caller knows where to walk back from.
+  const children = new Map(floors.map(f => [f, []]));
+  for (const [child, p] of parent) children.get(p).push(child);
+
+  const route = [];
+  function visit(floor) {
+    route.push(floor);
+    const kids = children.get(floor);
+    let last = floor;
+    for (let i = 0; i < kids.length; i++) {
+      last = visit(kids[i]);
+      if (i < kids.length - 1) {
+        let cur = last;
+        while (cur !== floor) {
+          cur = parent.get(cur);
+          route.push(cur);
+        }
+      }
+    }
+    return last;
+  }
+  visit(root);
+  return route;
+}
+
 // Given an ALREADY-SELECTED flat item list (each { id, value, weightUnits,
 // floor, timeWeight, order? }) — never a fresh knapsack search — packs
 // them into `bins` bags of `capacityPerBin` each to minimize the
 // bottleneck (max) per-player time-cost, instead of packBins()'s value-
 // maximizing objective. Item selection/total dollar value are whatever
 // the caller already decided; this only changes which bag each item lands
-// in. Returns { bags } in the same shape packBins() returns, or null if no
-// feasible placement was found (see the limitation note below) — callers
-// should fall back to whatever packing they already had, exactly like a
-// null packBins() result.
+// in. Returns { bags, shutterOperatorIndex } — the latter is an additive
+// field for the shutter-duty constraint below (null when it doesn't
+// apply) — or null if no feasible placement was found at all (see the
+// limitation note below) — callers should fall back to whatever packing
+// they already had, exactly like a null packBins() result.
 //
-// Two phases:
+// Three phases:
 //  1. Vault/Loading Bay items are placed first via a plain call to
 //     packBins() itself (as all-mandatory, no optional items) — reusing
 //     its already-correct tier-0 host-avoid-Vault logic with zero
@@ -761,6 +941,34 @@ const TRAVEL_COST_BY_MASK = Array.from({ length: 1 << EXHIBIT_FLOOR_LIST.length 
 //     a greedy heuristic) — a greedy assignment isn't guaranteed to find
 //     a feasible packing even when one exists, the same class of bug
 //     packBins() itself was rewritten to avoid on 2026-08-01.
+//  3. Shutter-duty hard constraint (2026-08-24), only when this run
+//     actually packs a Crisp Gallery item: guarantee a non-host bin can
+//     reach First Floor (the real physical location of the EMP/shutter
+//     console that gates Crisp Gallery access) at no extra loot-placement
+//     cost, by seeding one candidate non-host bin's starting floor-
+//     bitmask with the First-Floor bit before phase 2's search runs — a
+//     single-floor bitmask costs 0 in exhibitTravelCost by construction,
+//     so this represents "visits First Floor" without requiring an
+//     actual First Floor item to be assigned there (visiting a floor and
+//     looting it are different things — the console visit is a location
+//     requirement, not a loot requirement). Every non-host bin is tried;
+//     the lowest-bottleneck one wins, ties going to the lowest player
+//     index.
+//     Design note: an earlier version of this also tried the host as a
+//     last resort, then fell back to an unconstrained search with a
+//     "shutterConstraintRelaxed" warning flag if even that failed.
+//     Dropped (2026-08-24) after proving those paths are unreachable for
+//     any input this function actually receives: the virtual bit costs
+//     zero capacity, so for any bin k, whatever real item placement
+//     already makes the *unconstrained* problem feasible remains
+//     capacity-valid with the bit added, and that bin's cost still stays
+//     within tMax (which already accounts for the worst-case 4-floor
+//     travel cost) — so trying every non-host bin can never fail as long
+//     as the base problem is feasible at all, which callers already
+//     guarantee. If a future change (e.g. a bigger exhibit-floor graph)
+//     ever invalidates that proof, the host-then-relaxed fallback is
+//     straightforward to reintroduce — see this session's design
+//     conversation for the full three-tier version.
 //
 // Known limitation, accepted for "experimental" status: phase 1's fresh
 // Vault/Loading Bay placement isn't provably guaranteed to leave enough
@@ -783,7 +991,9 @@ export function packBinsForTime(items, bins, capacityPerBin) {
   if (!prePack) return null; // should not happen — see doc comment above
   const bagsOut = prePack.bags.map(b => ({ items: b.items.slice(), value: b.value, weightUsed: b.weightUsed }));
 
-  if (exhibit.length === 0) return { bags: bagsOut };
+  if (exhibit.length === 0) {
+    return { bags: bagsOut, shutterOperatorIndex: null };
+  }
 
   const remainingCapacity = bagsOut.map(b => capacityPerBin - b.weightUsed);
 
@@ -793,6 +1003,16 @@ export function packBinsForTime(items, bins, capacityPerBin) {
   const exhibitSorted = exhibit.slice().sort((a, b) =>
     (b.timeWeight - a.timeWeight) || ((a.order ?? 0) - (b.order ?? 0))
   );
+
+  const zeros = new Array(bins).fill(0);
+  // Safe upper bound for the minimal bottleneck: any single bin's cost is
+  // at most the sum of every exhibit item's time-weight (if they all
+  // landed in one bin) plus the max possible exhibitTravelCost across all
+  // 4 exhibit floors — derived from TRAVEL_COST_BY_MASK's own max rather
+  // than a hardcoded number (2026-08-24 fix: the old hardcoded `+3` had
+  // gone stale when FLOOR_TRANSITION_COST was bumped 1 -> 5 on
+  // 2026-08-23; the true max is a 3-edge MST x 5 = 15, not 3).
+  const tMax = exhibitSorted.reduce((s, it) => s + it.timeWeight, 0) + Math.max(...TRAVEL_COST_BY_MASK);
 
   function buildChecker(T) {
     const memo = new Map();
@@ -820,19 +1040,61 @@ export function packBinsForTime(items, bins, capacityPerBin) {
     return rec;
   }
 
-  const zeros = new Array(bins).fill(0);
-  // Safe upper bound for the minimal bottleneck: any single bin's cost is
-  // at most the sum of every exhibit item's time-weight (if they all
-  // landed in one bin) plus 3 (the max possible exhibitTravelCost across
-  // all 4 exhibit floors — see its own doc comment).
-  const tMax = exhibitSorted.reduce((s, it) => s + it.timeWeight, 0) + 3;
-  let bestT = null;
-  let bestRec = null;
-  for (let T = 0; T <= tMax; T++) {
-    const rec = buildChecker(T);
-    if (rec(0, remainingCapacity, zeros, zeros)) { bestT = T; bestRec = rec; break; }
+  // Seeds `forcedBin`'s starting floor-bitmask with the First-Floor bit —
+  // see the shutter-duty phase-3 doc comment above. null reproduces the
+  // plain unconstrained starting state (all-zero masks) unchanged.
+  const FIRST_FLOOR_BIT = 1 << EXHIBIT_FLOOR_INDEX.get('First');
+  function initialMasks(forcedBin) {
+    const m = zeros.slice();
+    if (forcedBin !== null) m[forcedBin] = FIRST_FLOOR_BIT;
+    return m;
   }
-  if (bestT === null) return null; // should not happen — see doc comment above
+
+  // Finds the minimal feasible bottleneck T for a given forced-bin seed
+  // (or the plain unconstrained search when forcedBin is null). Returns
+  // { T, rec, initMasks } or null if no T up to tMax is feasible.
+  function solveFor(forcedBin) {
+    const initMasks = initialMasks(forcedBin);
+    for (let T = 0; T <= tMax; T++) {
+      const rec = buildChecker(T);
+      if (rec(0, remainingCapacity, initMasks, zeros)) {
+        return { T, rec, initMasks };
+      }
+    }
+    return null;
+  }
+
+  // Shutter-duty hard constraint search — see phase-3 doc comment above
+  // for the full rationale, including why this only tries non-host bins
+  // (proven to always succeed for any packable input, so a host-last-
+  // resort tier and a relaxed-fallback warning aren't reachable code and
+  // were dropped). Ties resolve to the lowest player index, same
+  // convention used elsewhere in this file.
+  const needsShutters = exhibit.some(it => it.floor === 'Crisp Gallery');
+  let shutterOperatorIndex = null;
+  let winner = null;
+
+  if (needsShutters && bins >= 2) {
+    for (let k = 1; k < bins; k++) {
+      const candidate = solveFor(k);
+      if (candidate && (!winner || candidate.T < winner.T)) {
+        winner = candidate;
+        shutterOperatorIndex = k;
+      }
+    }
+  }
+
+  if (!winner) {
+    // Either the shutter constraint doesn't apply this run, or (should
+    // not happen for a genuinely packable input — see doc comment above)
+    // no non-host bin could satisfy it; either way, fall back to the
+    // plain unconstrained search.
+    winner = solveFor(null);
+    shutterOperatorIndex = null;
+  }
+
+  if (!winner) return null; // should not happen — see doc comment above
+  const { T: bestT, rec: bestRec, initMasks } = winner;
 
   // Reconstruct one concrete assignment achieving bestT, choosing among
   // cost-preserving candidates via the same tiers 2-4 packBins() already
@@ -842,7 +1104,7 @@ export function packBinsForTime(items, bins, capacityPerBin) {
   // deliberately not reused here — it's about the value model's
   // EMP-verification rationale, unrelated to this objective.
   let caps = remainingCapacity.slice();
-  let masks = zeros.slice();
+  let masks = initMasks.slice();
   let sums = zeros.slice();
   for (let i = 0; i < exhibitSorted.length; i++) {
     const it = exhibitSorted[i];
@@ -879,7 +1141,7 @@ export function packBinsForTime(items, bins, capacityPerBin) {
     sums = chosen.nextSums;
   }
 
-  return { bags: bagsOut };
+  return { bags: bagsOut, shutterOperatorIndex };
 }
 
 // Shared reachability predicate (2026-08-23) — consolidates the crew-size
@@ -1014,6 +1276,44 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   // packBinsForTime() can't find a feasible split (see its own doc
   // comment) — always safe, since that's the split this function would
   // have produced anyway.
+  let shutterOperatorIndex = null;
+  // floorRoutes (2026-08-24): suggested per-player floor-visit order,
+  // display-only — see deriveFloorRoute()'s doc comment above. Only ever
+  // computed for a split that was actually time-optimized, same gating
+  // as shutterOperatorIndex; null otherwise (mirrors that field's
+  // default). Root-per-role: the shutter operator always roots at First
+  // (guaranteed reachable via the shutter-duty virtual bit above); the
+  // host roots at Second if present, else Crisp Gallery — see fix 2
+  // below for why. Everyone else gets no preference and falls back to
+  // deriveFloorRoute()'s own deterministic default (which is itself
+  // elevator-aware — see that function's doc comment).
+  //
+  // Two 2026-08-24 fixes, found together while correcting
+  // exhibitTravelCost()'s elevator assumption (see ELEVATOR_FLOORS
+  // above exhibitTravelCost()):
+  // 1. The shutter operator's floorSet is seeded with 'First' even when
+  //    they have no REAL First-Floor item — without this, their
+  //    preferredRoot: 'First' request silently failed the
+  //    `floors.includes(preferredRoot)` check inside deriveFloorRoute()
+  //    (since 'First' wasn't actually in their real item floors) and
+  //    fell back to the generic default, producing NO route guidance at
+  //    all for the one player who most needs "go to First" guidance —
+  //    exactly what both of this session's real scope-outs did (a
+  //    Crisp-Gallery-only operator bag). Mirrors the same virtual-bit
+  //    concept packBinsForTime()'s own search already uses to decouple
+  //    "visited" from "looted" for this exact player.
+  // 2. The host's priority flipped to 'Second' before 'Crisp Gallery' —
+  //    at the time, Second was the only one of the two that was really
+  //    free to reach via elevator. 2026-08-30 update: Crisp Gallery
+  //    joined ELEVATOR_FLOORS (it's physically the same floor as Second,
+  //    just a different room — see ELEVATOR_FLOORS's own doc comment),
+  //    so this priority order is no longer a real cost difference,
+  //    just a stable tie-break between two equally-free roots. Left
+  //    as Second-first rather than reverting to Crisp-Gallery-first
+  //    (packBins()'s unrelated BIN-assignment sub-rank, which is about
+  //    the EMP-verification value-model rationale, not route realism)
+  //    since there's no reason to churn it now that both are valid.
+  let floorRoutes = null;
   if (state.experimentalPacking) {
     const itemsForTime = packedBags.flatMap(b => b.items).map(i => ({
       ...i,
@@ -1021,7 +1321,22 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
       timeWeight: timeWeightFor(itemById(catalog, i.id))
     }));
     const repacked = packBinsForTime(itemsForTime, state.players, bagCapacityPerPlayer);
-    if (repacked) packedBags = repacked.bags;
+    if (repacked) {
+      packedBags = repacked.bags;
+      // Only meaningful for a split that was actually time-optimized —
+      // the default above already covers the null-repacked (default
+      // split kept) case correctly.
+      shutterOperatorIndex = repacked.shutterOperatorIndex;
+      floorRoutes = packedBags.map((bag, i) => {
+        const floorSet = new Set(bag.items.map(it => it.floor).filter(f => EXHIBIT_FLOORS.has(f)));
+        if (i === shutterOperatorIndex) floorSet.add('First'); // virtual visit — fix 1 above
+        const preferredRoot =
+          i === shutterOperatorIndex ? 'First' :
+          i === 0 ? (floorSet.has('Second') ? 'Second' : (floorSet.has('Crisp Gallery') ? 'Crisp Gallery' : null)) :
+          null;
+        return deriveFloorRoute(floorSet, preferredRoot);
+      });
+    }
   }
 
   const chosenIds = new Set(packedBags.flatMap(b => b.items.map(i => i.id)));
@@ -1070,6 +1385,7 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
     helperBonusEach, planningFee,
     overflow, attempted, allBuyerItemsFit, mandatoryWeightSum, bcIneligibleIds,
     chosenIds, bcIdsSet, bags,
+    shutterOperatorIndex, floorRoutes,
     ineligibleCount: valid.length - eligible.length
   };
 }

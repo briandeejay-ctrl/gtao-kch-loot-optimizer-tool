@@ -145,6 +145,16 @@ entirely through `localStorage` (no view-swap, no SPA framework):
   packing swap already happens inside `runOptimizer()` itself (see "Core
   logic" below), since `state` flows into that call by reference with no
   extra wiring needed here.
+  **Shutter-duty hint (2026-08-24).** A second, independent `.hint`-style
+  line (`#shutterDutyNote`), directly under the experimental-packing
+  indicator, shown whenever `runOptimizer()`'s result carries a non-null
+  `shutterOperatorIndex` — e.g. "🔑 Suggested for shutters: Player 2 —
+  guaranteed low-cost First Floor access this run." Same "purely a
+  display toggle" shape as the indicator above it: the actual
+  recommendation is computed entirely inside `packBinsForTime()` as part
+  of its own search (see "Core logic" below), `renderItemsList()` only
+  reads the result. Deliberately not ported to `map-view.html` in this
+  pass — see that page's own entry below for why.
 - `map-view.html` — Page 3, Map View, added 2026-08-06. A lean,
   host-facing, screenshot/share-friendly live-reference for the *actual
   run*, reached via the "Map View →" button on `guide.html` (sitting
@@ -200,6 +210,14 @@ entirely through `localStorage` (no view-swap, no SPA framework):
   up. Also skips fetching `data/primary-targets.json` entirely — nothing
   on this page needs a primary-target value, so unlike the other two
   pages it only fetches `data/secondary-loot.json`.
+  For the same "duplicate, don't share" reason, `guide.html`'s
+  2026-08-24 shutter-duty hint (see that page's entry above) wasn't
+  ported here in that pass — it would need its own duplicated render
+  logic same as everything else in this list, and porting an
+  *operational* hint like this to the page that's actually meant for
+  during-the-run reference is arguably more natural here than on
+  `guide.html`, so it's flagged as a real, plausible next step rather
+  than a "maybe" — just not built in the same pass that shipped it.
 
 Floor Maps itself (an image-based extension of "Who Grabs What," not a
 replacement) lives only on `map-view.html`: one card per floor-map asset,
@@ -1042,15 +1060,377 @@ confirmation dialog on unlock.
     than an invalid/overflowing bag if it ever can't find a feasible
     split, and `runOptimizer()` silently keeps the default
     value-preserving split for that run when that happens — always safe,
-    since that's the split it would have produced anyway.
+    since that's the split it would have produced anyway. This is a real,
+    reproducible path, not just theoretical — see the shutter-duty fuzz
+    test below, which hit it in practice (host-avoided Vault + Loading Bay
+    items together starving the one non-host bin's remaining capacity for
+    the exhibit-item phase).
+  - **`tMax` bound fix (2026-08-24).** The threshold-scan's safe upper
+    bound used to be hardcoded as `sum of time-weights + 3` ("3 = the max
+    possible `exhibitTravelCost` across all 4 exhibit floors"), which went
+    stale the moment `FLOOR_TRANSITION_COST` was bumped from `1` to `5`
+    the same day this feature originally shipped — the true max is a
+    3-edge MST × 5 = 15, not 3. Only misfires for a bin legitimately
+    spanning 3-4 exhibit floors at a high time-weight sum (rare enough to
+    have gone unnoticed), but the shutter-duty constraint below stresses
+    this path harder on purpose. Fixed by deriving the bound from
+    `TRAVEL_COST_BY_MASK`'s own max instead of a hardcoded number, so it
+    can't drift out of sync with `FLOOR_TRANSITION_COST` again.
   - **Verification**: `test/pack-bins-for-time.test.js` includes a real
     regression fixture built from the two screenshots that motivated this
     feature (hand-verified true minimum bottleneck of 8, vs. 12 for this
     tool's own default split on the same items), direct `exhibitTravelCost()`
-    adjacency tests, an `isItemReachable`/`skipPreps` gating test, and a
-    300-trial fuzz test asserting `experimentalPacking` never overflows a
-    bag and never changes value/selection vs. the default run — same
-    fuzzing convention as `test/pack-bins.test.js`'s own fuzz test.
+    adjacency tests, an `isItemReachable`/`skipPreps` gating test, a `tMax`
+    regression test, and a 300-trial fuzz test asserting `experimentalPacking`
+    never overflows a bag and never changes value/selection vs. the default
+    run (extended 2026-08-24 to also check the shutter-duty invariant below)
+    — same fuzzing convention as `test/pack-bins.test.js`'s own fuzz test.
+- **Shutter-duty hard constraint (2026-08-24), experimental packing
+  only.** Real 3-player feedback on the model above (compared via
+  `test/compare-packing.mjs`) surfaced a genuine blind spot: the
+  experimental packer minimizes aggregate per-player time-cost, but has
+  no concept of "shutter duty" — the real, mandatory task of operating
+  the EMP/shutter console (physically on **First Floor**) to open Crisp
+  Gallery access for the rest of the crew, which isn't represented as
+  loot at all. An initial "observational" design (score whichever bags
+  the packer already produced, recommend the least-bad one) was designed
+  and hand-traced against the real feedback scope-out, then rejected: it
+  can only ever pick the best of whatever split happened to result — if
+  no bag in that split is genuinely well-positioned, "recommend the best
+  of a bad set" doesn't fix anything. The real fix has to happen during
+  bag *assignment* itself, as a genuine hard constraint on
+  `packBinsForTime()`'s own exact search.
+  - **Gated on Crisp Gallery actually being packed this run** (checked
+    directly on the flat exhibit-item list `packBinsForTime()` already
+    has) — if nothing gates access to open, there's nothing for a
+    shutter operator to do, so the whole constraint is skipped, not just
+    softened.
+  - **Mechanism: a designated non-host bin gets a virtual First-Floor
+    visit.** A key modeling gap closed during design: the model only ever
+    learns a bag "touches First Floor" via an assigned First Floor loot
+    item, but the console visit is a *location* requirement, not a loot
+    one — a player can walk there and hit the console without carrying
+    anything from there. Fixed by seeding one candidate non-host bin's
+    starting floor-bitmask with the First-Floor bit *before* any items are
+    assigned, rather than requiring an actual First Floor item to prove
+    presence. A single-floor bitmask seeded at First costs 0 in
+    `exhibitTravelCost` — specifically because First is one of the two
+    real elevator stops (see the "Suggested floor-visit order" section's
+    2026-08-24 elevator correction below; a single-floor bitmask is NOT
+    free in general, only for First/Second), so this is free by itself —
+    it only starts contributing travel cost once a second floor joins
+    that same bin, exactly like a real visit combined with looting
+    elsewhere. Every non-host bin is
+    tried (the existing `buildChecker(T)`/threshold-scan search, wrapped
+    to accept this optional seed); the lowest-bottleneck one wins, ties
+    going to the lowest player index.
+  - **Host is never tried, by design — not an oversight.** An earlier
+    version tried the host as a last resort if no non-host bin could
+    satisfy the constraint, then fell back to an unconstrained search
+    with a "constraint relaxed" warning if even that failed. Dropped after
+    proving both paths are unreachable for any input this function
+    actually receives: the virtual bit costs zero capacity, so for any
+    bin `k`, whatever real item placement already makes the
+    *unconstrained* problem feasible remains capacity-valid with the bit
+    added, and that bin's cost still stays within `tMax` (which already
+    accounts for the worst-case 4-floor travel cost) — so trying every
+    non-host bin can never fail as long as the base problem is feasible at
+    all, which callers already guarantee. If a future change (e.g. a
+    bigger exhibit-floor graph) ever invalidates this proof, the
+    host-then-relaxed fallback is straightforward to reintroduce.
+  - **Return shape**: `packBinsForTime()` now returns
+    `{ bags, shutterOperatorIndex }` (additive; `shutterOperatorIndex` is
+    `null` when the constraint doesn't apply). `runOptimizer()` threads
+    this straight onto its own returned result, defaulting to `null` when
+    `experimentalPacking` is off or when `packBinsForTime()` returns
+    `null` entirely (no time-optimized split, so no guarantee to report).
+  - **`guide.html`** shows a small, non-binding `.hint`-style line under
+    "Who Grabs What" whenever `shutterOperatorIndex` is set — see that
+    page's entry under "Pages" above. Purely a display read; no new
+    exported "recommendation" function was needed, since the packer
+    computes this directly as part of its own search.
+  - **Explicitly out of scope for this pass**: a third "role" for the
+    remaining non-host, non-shutter player(s) — pre-clearing Alarm
+    Floor/First before moving on to Second/Crisp Gallery, raised in
+    design discussion but deliberately deferred. Expected to emerge
+    naturally from the existing floor-clustering reconstruction tiers
+    (2-4, reused unchanged here) without a second explicit constraint.
+    Not designed or built now.
+  - **Future extensibility (not built now)**: the core algorithms here
+    (memoized per-bin search, MST-based travel cost, minimax threshold
+    scan) are unit-agnostic — they only ever sum and compare numbers.
+    Real per-action timing data would slot in as: `timeWeightFor()`
+    already reads whatever's in `catItem.lootTimeWeight`, so swapping
+    that field's values from the current hand-tuned 1-5 scale to real
+    seconds needs zero code changes; `FLOOR_TRANSITION_COST`'s flat
+    per-hop cost would need `FLOOR_ADJACENCY` to become a weighted graph
+    and `shortestFloorDistance()`'s BFS to become a real weighted-
+    shortest-path calc (trivial at 6 floors); and the virtual First-Floor
+    visit's implicit-zero cost would need its own explicit constant (e.g.
+    `SHUTTER_ACTION_COST`) instead of `0`. User-confirmed calibration
+    constraint for that future work: no individual action (one item's
+    loot time, one floor transition, or the console operation itself)
+    should exceed 30 real seconds.
+  - **Verification**: `test/pack-bins-for-time.test.js` covers the gate
+    (no Crisp Gallery packed → `shutterOperatorIndex: null`), a direct
+    designation test (confirms the chosen bin's floor set genuinely
+    includes First at zero marginal `exhibitTravelCost`), and the
+    extended 300-trial fuzz test above (whenever Crisp Gallery is packed
+    and `players >= 2`, `shutterOperatorIndex` must be `null` or a valid
+    non-host index — never host, never out of range; `null` remains
+    legitimate when `packBinsForTime()` fails entirely for the unrelated,
+    pre-existing capacity-starvation reason above). `test/compare-
+    packing.mjs` also prints the recommendation for manual spot-checks
+    against real scope-outs.
+- **Suggested floor-visit order (2026-08-24), display-only, experimental
+  packing only.** Spot-checking shutter-duty against real scope-outs
+  surfaced a follow-up gap: knowing *which* floors a bag touches isn't
+  the same as knowing *what order* to visit them in, and order matters
+  for real coordination — the shutter operator and the host both have
+  concrete reasons to hit their key floor first, not whenever it happens
+  to fall in an unordered set. The user also clarified the real
+  movement pattern: crews loot Vault/Loading Bay first, then take the
+  elevator up, and the elevator can drop a player at whichever exhibit
+  floor they want — so **the first exhibit floor a player visits is
+  free to reach; only transitions after that cost anything.** (**Corrected
+  same day** — the elevator only actually serves First and Second, not
+  Alarm Floor or Crisp Gallery; see the "Elevator correction" bullet
+  below. The MST-encodes-it-for-free reasoning immediately below stayed
+  right for the two served floors, just not for all four as originally
+  written here.) That "first floor free" property turns out to already
+  be exactly what `exhibitTravelCost()`'s MST computation encodes (a
+  tree over N floors has N-1 paid edges) — the existing bottleneck-cost
+  numbers needed no
+  changes. What was missing was a literal visit order derived from that
+  same MST.
+  - **Display-only, same boundary as shutter-duty itself.**
+    `packBinsForTime()`'s search and every existing return field are
+    untouched — this is a new, purely-derived read on top of bags the
+    packer already decided. Valid specifically because total travel
+    cost is mathematically invariant to which floor is picked as the
+    route's root (a real MST's total weight doesn't depend on its start
+    node), so forcing a specific root for display can never contradict
+    a cost number already computed. Scoped to exhibit floors only
+    (Vault/Loading Bay stay outside this and the whole time-cost
+    model's scope), and computed/rendered only when
+    `state.experimentalPacking` is on.
+  - **`deriveFloorRoute(floorSet, preferredRoot)`** (new export, next to
+    `exhibitTravelCost()` in `kch-model.js`) resolves a root — the
+    given `preferredRoot` if it's actually in `floorSet`, else the
+    first `EXHIBIT_FLOOR_LIST` entry present — then walks the same
+    greedy-nearest MST growth `exhibitTravelCost()` uses, but tracking
+    real parent pointers instead of just a running total, and returns a
+    DFS walk of that tree as an ordered floor array. Deliberately a
+    separate function rather than a shared refactor of
+    `exhibitTravelCost()` — that one sits in `packBinsForTime()`'s hot
+    search path (backed by the precomputed `TRAVEL_COST_BY_MASK`) and
+    already has passing test coverage, so it's left completely
+    untouched; this one is only called a handful of times per optimizer
+    run (once per bin), so duplicating its small loop is deliberate.
+  - **Root-per-role**, computed in `runOptimizer()` right after
+    `shutterOperatorIndex` is finalized: the shutter operator always
+    roots at `'First'` (guaranteed reachable via the shutter-duty
+    virtual bit — see the elevator-correction bullet below for why their
+    `floorSet` also needs `'First'` added explicitly); the host roots at
+    `'Second'` if present in their floor set, else `'Crisp Gallery'`
+    (flipped same day — see the "Elevator correction" bullet below;
+    `'Crisp Gallery'`-over-`'Second'` is still `packBins()`'s own
+    sub-rank for *bin selection*, an unrelated value-model rationale —
+    only the *route-rooting* priority flipped here); everyone else gets
+    no preference and falls back to `deriveFloorRoute()`'s deterministic
+    default. The operator is never the host by construction, so the two
+    rules can
+    never conflict. Attached to `runOptimizer()`'s result as
+    `floorRoutes` (an array parallel to `bags`), `null` when
+    `experimentalPacking` is off or `packBinsForTime()` returned no
+    feasible split — same default pattern as `shutterOperatorIndex`.
+  - **A real correctness bug found and fixed during implementation, not
+    a naive port of insertion order:** the MST can branch, and a branch
+    can sit more than one level deep. With all 4 exhibit floors in one
+    bin, First is exactly 1 hop from each of the other three, so the
+    true MST is often star-shaped — not a single path. A first-draft
+    "push the immediate branch floor and move on" backtrack broke for a
+    two-level branch (e.g. root `Second`, with `First -> Alarm Floor`
+    two levels down): it jumped straight from `Alarm Floor` back to
+    `Second`, silently implying they're directly adjacent when they're
+    really 2 hops apart via First. Fixed by walking back up the REAL
+    parent chain one floor at a time on every backtrack, never
+    shortcutting — verified by an exhaustive test across every non-empty
+    exhibit-floor subset and every root choice, asserting every
+    consecutive route pair is a genuine 1-hop adjacency.
+  - **Known, deliberately out-of-scope-for-this-pass simplification:**
+    because `exhibitTravelCost()` charges each MST edge once (N-1 paid
+    edges for N floors), a genuinely branching route's DISPLAYED
+    bottleneck cost is a one-way spanning total, not the real
+    round-trip distance a player walks once they have to backtrack to
+    a second branch — the star-case route above, fully retraced, is 5
+    real hops (25), while its floor set's `exhibitTravelCost()` total
+    is only 3 edges (15). This gap already existed before this feature;
+    making the route honest about backtracks just makes it visible for
+    the first time. Not fixed here — `exhibitTravelCost()` stays
+    untouched per the approved design — flagged as a real, quantifiable
+    follow-up if branching routes turn out to be common enough in
+    practice to matter.
+  - **`guide.html`** renders one small `.hint`-style line per player
+    card, right after the player's name and before their item list,
+    whenever `state.experimentalPacking` is on and that player's route
+    has 2+ floors (a single-floor or empty route has nothing worth
+    stating): `Suggested order: Alarm Floor → First → Crisp Gallery`. A
+    repeated floor name from a backtrack renders exactly as the array
+    gives it, deliberately not hidden, so the host isn't misled into
+    thinking it's one uninterrupted lap. Not ported to `map-view.html`
+    in this pass — same "duplicate, don't share" convention and
+    reasoning already applied to the shutter-duty hint not landing
+    there yet.
+  - **Verification**: `test/floor-route.test.js` (new file) covers
+    trivial empty/single-floor cases, unambiguous 2-3 floor orders, the
+    star and two-level-branch cases above, preferred-root honoring and
+    fallback, an exhaustive "route visits exactly the input floors"
+    check across every non-empty subset and root choice, and a
+    cross-check asserting the route's distinct-edge total always equals
+    `exhibitTravelCost()`'s own number for the same floor set (ties the
+    new function back to the already-validated cost model). Verified
+    against both of this session's real scope-outs via
+    `test/compare-packing.mjs` (extended to print each player's
+    suggested order) — the host's route came back `Crisp Gallery →
+    First → Alarm Floor` in both, matching the user's own description
+    of the real movement pattern exactly; neither scope-out happened to
+    hit the branching case.
+  - **Elevator correction (2026-08-24, same day): the elevator only
+    serves First and Second, not Alarm Floor or Crisp Gallery.** The
+    design above originally assumed "the elevator can drop a player at
+    whichever exhibit floor they want," which the user corrected after
+    seeing the feature in action. This wasn't just wrong for this
+    feature — it was a real, pre-existing bug in `exhibitTravelCost()`
+    itself (shipped 2026-08-23, a day before this fix), whose
+    `floors.length <= 1 -> return 0` special case had been silently
+    treating a lone Alarm-Floor-only or Crisp-Gallery-only bag as free to
+    reach, when it should cost one real hop from whichever elevator
+    floor is nearest.
+    - **Fix scope, proven exhaustively rather than assumed to be
+      isolated:** with only 4 exhibit floors and only 2 of them unserved
+      (Alarm Floor, Crisp Gallery), the *only* multi-floor subset that
+      could possibly lack a served floor at all is
+      `{Alarm Floor, Crisp Gallery}` itself — and its MST total is
+      provably identical whether computed the old way (an arbitrary real
+      floor as the free MST root — MST total is root-invariant) or
+      routed through a free virtual elevator anchor first, since the
+      shortest real path between them already goes through First either
+      way. Every other 2+-floor subset already contains First and/or
+      Second, so root-invariance alone already made the bug irrelevant
+      there. The fix is therefore isolated to exactly two cases: the
+      singleton `{Alarm Floor}` and singleton `{Crisp Gallery}` sets. New
+      `ELEVATOR_FLOORS` constant (`{'First', 'Second'}`) in
+      `kch-model.js`; `exhibitTravelCost()`'s `floors.length >= 2` MST
+      loop needed **no changes at all**.
+    - **A second, related bug found by the same investigation:** the
+      shutter operator's `floorRoutes` root (`'First'`) was silently
+      never honored whenever their real bag had no actual First-Floor
+      item — exactly what both of this session's real scope-outs
+      produced (a Crisp-Gallery-only operator bag).
+      `deriveFloorRoute`'s `preferredRoot && floors.includes(preferredRoot)`
+      check failed silently since `'First'` wasn't a *real* item floor
+      for them, so it fell back to the generic default and the operator
+      got **no route guidance at all** — defeating a real chunk of the
+      feature's purpose for the one player who most needs "go to First"
+      guidance. Fixed by seeding the operator's `floorSet` with
+      `'First'` before calling `deriveFloorRoute()`, mirroring the same
+      virtual-bit concept `packBinsForTime()`'s own search already uses
+      to decouple "visited" from "looted" for this exact player.
+    - **The host's root preference flipped to `'Second'` before
+      `'Crisp Gallery'`** — Second is the real free elevator floor,
+      Crisp Gallery isn't. This doesn't lose the "get to the critical
+      room fast" intent: Crisp Gallery is directly adjacent to Second (1
+      hop), so it still shows up as the route's very next stop in the
+      common case — just now honestly, instead of implying zero-cost
+      arrival there.
+    - **`deriveFloorRoute()` itself** now prepends an implicit `'First'`
+      entry whenever `floorSet` is drawn entirely from the two unserved
+      floors, overriding any requested `preferredRoot` (a root that
+      isn't reachable for free was never a valid "free first stop" to
+      begin with) — `'First'` is hardcoded rather than computed
+      generically, since for this specific 4-floor graph it's always at
+      least as close as `'Second'` for both possible unserved floors
+      (Alarm Floor: 1 hop vs 2; Crisp Gallery: 1 hop vs 1, a tie). A lone
+      Alarm-Floor-only or Crisp-Gallery-only bag's route grows from a
+      1-element ("nothing to show") route to a real 2-element one, e.g.
+      `['First', 'Crisp Gallery']` — `guide.html`'s existing
+      `route.length >= 2` display gate needed **no change**, since this
+      is exactly the "something worth telling the player" case that gate
+      already exists for.
+    - **Re-verified against both of this session's real scope-outs**:
+      Player 2 (shutter operator) and Player 3 (a Crisp-Gallery-only
+      bag with no role), previously silent, now both show `First →
+      Crisp Gallery`; their reported bottleneck/time-cost numbers rose
+      by exactly 5 (the one real hop), e.g. 14 → 19 and 8 → 13 in the
+      3-player scope-out. Total secondary value and item selection are
+      unaffected in both, as expected.
+    - **Verification**: `test/pack-bins-for-time.test.js` gained direct
+      `exhibitTravelCost()` tests for the two previously-untested
+      singleton cases (`{'Alarm Floor'}` and `{'Crisp Gallery'}`, both
+      now 5, not 0) alongside the still-correct `{'First'}`/`{'Second'}`
+      = 0 cases; the pre-existing "real regression fixture" and `tMax`
+      regression tests were rerun (not just re-read) and confirmed
+      unaffected, matching the exhaustive-proof reasoning above.
+      `test/floor-route.test.js`'s exhaustive cross-check test (every
+      non-empty subset × every root choice) needed no logic changes and
+      passed immediately once both fixes landed together — confirming
+      they're mutually consistent by construction, not just by
+      inspection — plus two new explicit tests for the lone-Alarm-Floor
+      and lone-Crisp-Gallery implicit-entry cases. Full suite: 141/141
+      passing.
+  - **Crisp Gallery co-location correction (2026-08-30), narrowing the
+    fix above.** Surfaced comparing a real 2-player run (screenshotted,
+    the tool's suggestion vs. what was actually played) against the
+    tool's experimental output: **Crisp Gallery is physically the same
+    floor as Second, not a separate level** — `floorMaps` in
+    `data/secondary-loot.json` already documents this (they share one
+    map image) — so reaching it after riding the elevator to Second is
+    genuinely free, unlike Alarm Floor, which really is a separate
+    level. The 2026-08-24 fix above was right that "any lone floor is
+    free" was wrong, but had lumped Crisp Gallery in with Alarm Floor as
+    if both were real separate levels, undercounting how cheap Crisp
+    Gallery actually is (charging it a real hop it doesn't cost).
+    - **Fix**: `ELEVATOR_FLOORS` widened to `{'First', 'Second', 'Crisp
+      Gallery'}`. Only `Alarm Floor` remains unserved. This also
+      simplifies the exhaustive proof from the 2026-08-24 fix: with just
+      1 unserved floor instead of 2, no 2+-floor subset can ever lack a
+      served floor at all (a subset of size 2+ either is all-served, or
+      pairs Alarm Floor with at least one served floor) — the only
+      floor set that can still lack a served floor is the singleton
+      `{Alarm Floor}` itself. The `floors.length >= 2` MST loop still
+      needed **no changes**, same as before.
+    - **`deriveFloorRoute()`'s implicit-elevator-entry prepend** (see
+      above) now only ever fires for the singleton `{Alarm Floor}` case
+      — a lone Crisp Gallery route stands on its own (`['Crisp
+      Gallery']`) same as First/Second, no more phantom `'First'` stop.
+    - **The host's root-preference flip from the 2026-08-24 fix
+      (`'Second'` before `'Crisp Gallery'`) is no longer a real cost
+      difference** — both are equally free now — just a stable
+      tie-break between two valid roots. Left as-is (Second-first)
+      rather than reverted, since there's no reason to churn it.
+    - **This also resolves an apparent inconsistency flagged mid-session
+      before the real cause was known**: a host route rooted at Crisp
+      Gallery (e.g. `Crisp Gallery → First → Alarm Floor`) looked
+      "physically backwards" under the old model (implying free arrival
+      somewhere unreachable for free) — it isn't backwards at all once
+      Crisp Gallery is correctly known to be co-located with Second.
+      No separate fix was needed for that once this one landed.
+    - **Verification**: `test/pack-bins-for-time.test.js`'s lone-Crisp-
+      Gallery test flipped from asserting `5` to asserting `0`, with a
+      new comment explaining why (co-located with Second, unlike Alarm
+      Floor); `test/floor-route.test.js`'s lone-Crisp-Gallery implicit-
+      entry test was removed (folded into the lone-elevator-served-floor
+      test instead, since Crisp Gallery no longer needs special
+      treatment there) and its local `ELEVATOR_FLOORS` copy updated to
+      match. Re-ran (not just re-read) the pre-existing "real regression
+      fixture" and `tMax` regression tests — both fixture bags happen to
+      span multiple exhibit floors already, so neither hits the changed
+      singleton case, and both passed unaffected. Full suite: 141/141
+      passing. Spot-checked against two real scope-outs via
+      `test/compare-packing.mjs`: a Crisp-Gallery-only bag's time-cost
+      dropped back down by exactly 5 (the phantom hop), and the shutter
+      operator's suggested order and designation were both unaffected.
 
 ## Known open questions (confirm before shipping)
 - The source payout table also included values for runs where witnesses/CCTV
@@ -1061,21 +1441,48 @@ confirmation dialog on unlock.
   the earlier estimate — use the table value, not the old 4x-guess.
 
 ## Backlog (not yet started)
-Nothing currently open — both items raised 2026-08-22 (Advanced Settings
-accordion, experimental time-optimized packing model) shipped 2026-08-23;
-see `index.html`'s Advanced Settings entry under Pages and "Core logic"'s
-experimental time-optimized packing section below. A future "no EMP"
-toggle alongside "Skip Glass Cutter prep" was floated but not designed or
-built — no slot reserved for it in the accordion's markup, just a
-plausible next entry if it's ever picked up.
+The items raised 2026-08-22 (Advanced Settings accordion, experimental
+time-optimized packing model) shipped 2026-08-23, and the shutter-duty
+hard constraint plus the suggested floor-visit order raised while
+spot-checking it against real scope-outs both shipped 2026-08-24, with a
+Crisp Gallery co-location follow-up shipping 2026-08-30; see
+`index.html`'s Advanced Settings entry under Pages and "Core logic"'s
+experimental time-optimized packing / shutter-duty / suggested
+floor-visit order sections below. A future "no EMP" toggle alongside
+"Skip Glass Cutter prep" was floated but not designed or built — no slot
+reserved for it in the accordion's markup, just a plausible next entry if
+it's ever picked up. Two other plausible next entries surfaced
+2026-08-24, neither designed or built: hardening the shutter-duty
+recommendation into an actual scheduling constraint if a route ever looks
+genuinely bad in practice, and reconciling `exhibitTravelCost()`'s
+one-way MST total with the real round-trip distance a branching route
+implies (see the suggested floor-visit order section's "known
+simplification" note).
 
-## Stack
-Plain HTML/CSS/JS, no build step. Deploys as-is to GitHub Pages. The only
-non-static artifact is `package.json` + `test/`, dev-only tooling for the
-Node test runner — it never ships; GitHub Pages still just serves
-`index.html`/`guide.html`/`map-view.html`/`map-scope.html`/`js/`/`css/`/
-`data/` as static files.
-
-## Commands
-- `npm test` (or `node --test`) — runs the suite in `test/*.test.js`
-  against `js/kch-model.js`. No external dependencies, no bundler.
+**Raised 2026-08-30, comparing a real 2-player run against the
+experimental model's suggestion (same session as the Crisp Gallery
+fix above), neither designed nor built:**
+- **The time model has no job/role assignment.** It conflates "which bag
+  an item's value is attributed to" (a pure payout-split abstraction,
+  correctly irrelevant to payout elsewhere in this tool) with "which
+  player travels to pick it up" — real crews don't follow that; whoever
+  is routing through a room grabs what's there regardless of nominal bag
+  ownership, and real runs have genuine sequencing/sync points (the
+  Vault as a convergence point, EMP timing, before-vault vs. after-vault
+  staging) the model doesn't represent at all — it only scores "which
+  floors does this bag's item set touch," with no ordering. A referenced
+  independent calculator ("Maze") reportedly does model explicit
+  per-player jobs; this is the real fix for the gap, but is a
+  substantially bigger redesign than a quick patch.
+- **A smaller, partial step toward that gap, floated but not designed:**
+  an Advanced Settings toggle (visible only when experimental packing is
+  on) — "Clear 1F and Alarm before vault?" — since the two orderings
+  have a real skill/risk tradeoff, not just a time difference: clearing
+  Alarm Floor/First *before* the vault is faster (no detour after) but
+  harder, since cameras aren't disabled yet and a downed guard's body
+  being spotted trips the alarm, requiring a seasoned player to avoid
+  it; clearing them *after* the vault is easier/safer, since the same
+  EMP/camera-disable that opens Crisp Gallery access covers guard-body
+  visibility by then. A toggle could let the time model weight/sequence
+  Alarm Floor + First relative to the Vault differently based on crew
+  skill, without needing full job-assignment modeling.
