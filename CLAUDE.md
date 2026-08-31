@@ -145,16 +145,19 @@ entirely through `localStorage` (no view-swap, no SPA framework):
   packing swap already happens inside `runOptimizer()` itself (see "Core
   logic" below), since `state` flows into that call by reference with no
   extra wiring needed here.
-  **Shutter-duty hint (2026-08-24).** A second, independent `.hint`-style
-  line (`#shutterDutyNote`), directly under the experimental-packing
-  indicator, shown whenever `runOptimizer()`'s result carries a non-null
-  `shutterOperatorIndex` — e.g. "🔑 Suggested for shutters: Player 2 —
-  guaranteed low-cost First Floor access this run." Same "purely a
-  display toggle" shape as the indicator above it: the actual
-  recommendation is computed entirely inside `packBinsForTime()` as part
-  of its own search (see "Core logic" below), `renderItemsList()` only
-  reads the result. Deliberately not ported to `map-view.html` in this
-  pass — see that page's own entry below for why.
+  **Shutter/EMP-role UI removed (2026-08-31), after shipping 2026-08-24.**
+  `#shutterDutyNote` ("🔑 Suggested for shutters: Player 2 — guaranteed
+  low-cost First Floor access this run.") and the per-player "Suggested
+  order: A → B → C" route line (see "Core logic" below) both existed
+  briefly on this page and are now gone — user decision: the experimental
+  view shouldn't accumulate UI the normal model lacks, since that nudges
+  people toward an unfinished model ahead of real job/role modeling
+  (backlog item 6) existing to back it up. Both underlying guarantees
+  (console operator + host in-gallery verifier — see "Core logic") are
+  still fully enforced inside `packBinsForTime()`/`runOptimizer()`; only
+  the display is gone. `shutterOperatorIndex` and the newer
+  `neededGalleryPresence` field are still returned by `runOptimizer()`
+  for tests and the dev-only `test/compare-packing.mjs` CLI.
 - `map-view.html` — Page 3, Map View, added 2026-08-06. A lean,
   host-facing, screenshot/share-friendly live-reference for the *actual
   run*, reached via the "Map View →" button on `guide.html` (sitting
@@ -1085,12 +1088,13 @@ confirmation dialog on unlock.
     never overflows a bag and never changes value/selection vs. the default
     run (extended 2026-08-24 to also check the shutter-duty invariant below)
     — same fuzzing convention as `test/pack-bins.test.js`'s own fuzz test.
-- **Shutter-duty hard constraint (2026-08-24), experimental packing
-  only.** Real 3-player feedback on the model above (compared via
-  `test/compare-packing.mjs`) surfaced a genuine blind spot: the
-  experimental packer minimizes aggregate per-player time-cost, but has
-  no concept of "shutter duty" — the real, mandatory task of operating
-  the EMP/shutter console (physically on **First Floor**) to open Crisp
+- **Shutter/EMP hard constraints, experimental packing only** (2026-08-24;
+  extended 2026-08-31 with a second role — see below). Real 3-player
+  feedback on the model above (compared via `test/compare-packing.mjs`)
+  surfaced a genuine blind spot: the experimental packer minimizes
+  aggregate per-player time-cost, but originally had no concept of
+  "shutter duty" at all — the real, mandatory task of operating the
+  EMP/shutter console (physically on **First Floor**) to open Crisp
   Gallery access for the rest of the crew, which isn't represented as
   loot at all. An initial "observational" design (score whichever bags
   the packer already produced, recommend the least-bad one) was designed
@@ -1100,6 +1104,20 @@ confirmation dialog on unlock.
   of a bad set" doesn't fix anything. The real fix has to happen during
   bag *assignment* itself, as a genuine hard constraint on
   `packBinsForTime()`'s own exact search.
+  **2026-08-31 correction: there are actually TWO distinct roles here,
+  not one**, confirmed directly with the user after a real 4-player
+  scope-out showed the host landing on Alarm Floor + First with zero
+  Crisp Gallery presence at all:
+  - **(a) Console operator** — opens the shutters from the First Floor
+    console. Can be any non-host player. This is the ORIGINAL 2026-08-24
+    design below and is unchanged.
+  - **(b) In-gallery verifier** — must be physically inside Crisp Gallery
+    and confirm presence BEFORE the EMP is triggered; popping it early
+    (before the shutters are open, or before the verifying player is
+    actually inside) locks everyone out. **Always the host**,
+    unconditionally — not searched/optimized like (a), because it isn't
+    interchangeable the same way. This role was missing entirely before
+    2026-08-31 — see its own bullet below.
   - **Gated on Crisp Gallery actually being packed this run** (checked
     directly on the flat exhibit-item list `packBinsForTime()` already
     has) — if nothing gates access to open, there's nothing for a
@@ -1124,10 +1142,11 @@ confirmation dialog on unlock.
     tried (the existing `buildChecker(T)`/threshold-scan search, wrapped
     to accept this optional seed); the lowest-bottleneck one wins, ties
     going to the lowest player index.
-  - **Host is never tried, by design — not an oversight.** An earlier
-    version tried the host as a last resort if no non-host bin could
-    satisfy the constraint, then fell back to an unconstrained search
-    with a "constraint relaxed" warning if even that failed. Dropped after
+  - **Host is never tried FOR THIS ROLE, by design — not an oversight.**
+    An earlier version tried the host as a last resort *for the
+    console-operator role* if no non-host bin could satisfy the
+    constraint, then fell back to an unconstrained search with a
+    "constraint relaxed" warning if even that failed. Dropped after
     proving both paths are unreachable for any input this function
     actually receives: the virtual bit costs zero capacity, so for any
     bin `k`, whatever real item placement already makes the
@@ -1135,20 +1154,53 @@ confirmation dialog on unlock.
     added, and that bin's cost still stays within `tMax` (which already
     accounts for the worst-case 4-floor travel cost) — so trying every
     non-host bin can never fail as long as the base problem is feasible at
-    all, which callers already guarantee. If a future change (e.g. a
-    bigger exhibit-floor graph) ever invalidates this proof, the
+    all, which callers already guarantee. The same proof extends cleanly
+    to two simultaneous virtual bits on two different bins (see role (b)
+    below) — they don't share capacity or interact. If a future change
+    (e.g. a bigger exhibit-floor graph) ever invalidates this proof, the
     host-then-relaxed fallback is straightforward to reintroduce.
-  - **Return shape**: `packBinsForTime()` now returns
-    `{ bags, shutterOperatorIndex }` (additive; `shutterOperatorIndex` is
-    `null` when the constraint doesn't apply). `runOptimizer()` threads
-    this straight onto its own returned result, defaulting to `null` when
-    `experimentalPacking` is off or when `packBinsForTime()` returns
-    `null` entirely (no time-optimized split, so no guarantee to report).
-  - **`guide.html`** shows a small, non-binding `.hint`-style line under
-    "Who Grabs What" whenever `shutterOperatorIndex` is set — see that
-    page's entry under "Pages" above. Purely a display read; no new
-    exported "recommendation" function was needed, since the packer
-    computes this directly as part of its own search.
+  - **(b) In-gallery verifier — always host, unconditional (2026-08-31).**
+    Uses the exact same zero-capacity virtual-bit mechanism as (a), just
+    applied unconditionally to bin 0 (host) whenever `needsShutters` —
+    entirely independent of (a)'s search, which is untouched:
+    ```js
+    const CRISP_GALLERY_BIT = 1 << EXHIBIT_FLOOR_INDEX.get('Crisp Gallery');
+    function initialMasks(forcedBin) {
+      const m = zeros.slice();
+      if (needsShutters) m[0] = CRISP_GALLERY_BIT;        // (b) host, always
+      if (forcedBin !== null) m[forcedBin] = FIRST_FLOOR_BIT; // (a) searched, non-host
+      return m;
+    }
+    ```
+    Applies even in the `solveFor(null)` fallback (used when no console-
+    operator candidate is found, or `bins < 2`) and even in a solo run
+    (trivially satisfied there, since host has every item anyway) — the
+    seed is gated only on `needsShutters`, not on `forcedBin`. Host's own
+    route/bottleneck may get worse as a direct result (e.g. a real
+    2F→1F→Alarm Floor walk) — explicitly accepted by the user: the
+    requirement is that host is *guaranteed* Crisp Gallery presence, not
+    that the crew-wide bottleneck stays minimal. The default
+    (non-experimental) value model already gets this right via
+    `packBins()`'s `HOST_PRIORITY_FLOORS` tier — this was a gap specific
+    to the time-optimized model, which doesn't reuse that tier (see the
+    reconstruction-tiers comment in `kch-model.js` for why).
+  - **Return shape**: `packBinsForTime()` still returns
+    `{ bags, shutterOperatorIndex }` — unchanged, since role (a)'s
+    semantics didn't change. `runOptimizer()` additionally computes and
+    returns a `neededGalleryPresence` boolean (whether role (b)'s
+    guarantee applied this run at all — i.e. whether any packed item is
+    on Crisp Gallery), independent of whether `packBinsForTime()` found a
+    feasible split.
+  - **No `guide.html` UI for either role (2026-08-31, user decision,
+    reversing the original 2026-08-24 UI for role (a)).** See that page's
+    entry under "Pages" above — the experimental view shouldn't
+    accumulate UI the normal model lacks, which would nudge users toward
+    an unfinished model ahead of real job/role modeling (backlog item 6)
+    existing to back it up. Both constraints are still fully enforced;
+    only the display is gone. `shutterOperatorIndex`/
+    `neededGalleryPresence` remain on `runOptimizer()`'s result for tests
+    and `test/compare-packing.mjs` (dev-only, unaffected by this UI
+    principle).
   - **Explicitly out of scope for this pass**: a third "role" for the
     remaining non-host, non-shutter player(s) — pre-clearing Alarm
     Floor/First before moving on to Second/Crisp Gallery, raised in
@@ -1182,6 +1234,20 @@ confirmation dialog on unlock.
     pre-existing capacity-starvation reason above). `test/compare-
     packing.mjs` also prints the recommendation for manual spot-checks
     against real scope-outs.
+    **2026-08-31 additions for role (b)**: a targeted fixture
+    ("host in-gallery verifier...") built so the two roles are forced to
+    genuinely conflict — an Alarm Floor item and a Crisp Gallery item
+    each sized to fill one whole bag, where pairing Alarm Floor with
+    host's mandatory (even if only virtual) Crisp Gallery visit costs a
+    real 2-hop MST detour (10) vs. 0 for Crisp Gallery alone, so an exact
+    bottleneck-minimizing search is provably forced to give host the real
+    Crisp Gallery item, not Alarm Floor — proves the guarantee actually
+    changes the outcome rather than being satisfied by the pre-existing
+    capacity tie-break coincidentally; a companion gate test
+    (`neededGalleryPresence: false` and host unaffected when no Crisp
+    Gallery item is packed); and the fuzz test above extended to assert
+    `neededGalleryPresence` exactly tracks whether any packed item is on
+    Crisp Gallery, for every trial regardless of crew size.
 - **Suggested floor-visit order (2026-08-24), display-only, experimental
   packing only.** Spot-checking shutter-duty against real scope-outs
   surfaced a follow-up gap: knowing *which* floors a bag touches isn't
@@ -1271,17 +1337,17 @@ confirmation dialog on unlock.
     untouched per the approved design — flagged as a real, quantifiable
     follow-up if branching routes turn out to be common enough in
     practice to matter.
-  - **`guide.html`** renders one small `.hint`-style line per player
-    card, right after the player's name and before their item list,
-    whenever `state.experimentalPacking` is on and that player's route
-    has 2+ floors (a single-floor or empty route has nothing worth
-    stating): `Suggested order: Alarm Floor → First → Crisp Gallery`. A
-    repeated floor name from a backtrack renders exactly as the array
-    gives it, deliberately not hidden, so the host isn't misled into
-    thinking it's one uninterrupted lap. Not ported to `map-view.html`
-    in this pass — same "duplicate, don't share" convention and
-    reasoning already applied to the shutter-duty hint not landing
-    there yet.
+  - **`guide.html` display removed entirely (2026-08-31) — see the
+    dated correction at the end of this section.** This bullet describes
+    the display as it originally shipped 2026-08-24, for history only:
+    it rendered one small `.hint`-style line per player card, right
+    after the player's name and before their item list, whenever
+    `state.experimentalPacking` was on and that player's route had 2+
+    floors: `Suggested order: Alarm Floor → First → Crisp Gallery`. A
+    repeated floor name from a backtrack rendered exactly as the array
+    gave it, deliberately not hidden, so the host wasn't misled into
+    thinking it was one uninterrupted lap. It was never ported to
+    `map-view.html`.
   - **Verification**: `test/floor-route.test.js` (new file) covers
     trivial empty/single-floor cases, unambiguous 2-3 floor orders, the
     star and two-level-branch cases above, preferred-root honoring and
@@ -1431,6 +1497,35 @@ confirmation dialog on unlock.
       `test/compare-packing.mjs`: a Crisp-Gallery-only bag's time-cost
       dropped back down by exactly 5 (the phantom hop), and the shutter
       operator's suggested order and designation were both unaffected.
+  - **Display wiring pulled back out (2026-08-31) — the whole feature
+    described in this section was removed from `runOptimizer()` and
+    `guide.html`, though `deriveFloorRoute()` itself and
+    `test/floor-route.test.js` stay in the codebase untouched.** Same
+    session as the "host in-gallery verifier" shutter-duty addition (see
+    that section above) — reviewing a real 4-player scope-out surfaced
+    that the per-player walking-itinerary display is genuinely
+    job/role-sequencing territory, the exact thing backlog item 6 (no
+    job/role assignment in the time model) is meant to own properly. The
+    user's stated principle: the experimental view shouldn't accumulate
+    UI features the normal model lacks, since that nudges people toward
+    an unfinished/unvalidated model ahead of real job/role modeling
+    existing to back it up — and the user's longer-term intent is a
+    routing/role suggestor built for **both** the normal and
+    time-optimized models together, once item 6 is actually designed, not
+    an experimental-only extra shipped piecemeal in the meantime.
+    - **What was removed**: the `floorRoutes` computation inside
+      `runOptimizer()` (the `.map()` over `packedBags` calling
+      `deriveFloorRoute()`) and the `floorRoutes` field on its returned
+      object; the per-player "Suggested order: ..." `<p class="hint">`
+      block in `guide.html`'s `renderItemsList()`; the `🧭` print block in
+      `test/compare-packing.mjs`.
+    - **What stayed**: `deriveFloorRoute()` itself in `kch-model.js` —
+      correct, exhaustively tested, kept as a dormant utility for when
+      item 6 picks this back up, the same precedent this file already
+      sets for `knapsack()`/`assignItemsToBags()` (tested primitives kept
+      even when unused in production). `test/floor-route.test.js` is
+      untouched, since it tests `deriveFloorRoute()` directly, not
+      through `runOptimizer()`.
 
 ## Known open questions (confirm before shipping)
 - The source payout table also included values for runs where witnesses/CCTV

@@ -941,34 +941,71 @@ export function deriveFloorRoute(floorSet, preferredRoot) {
 //     a greedy heuristic) — a greedy assignment isn't guaranteed to find
 //     a feasible packing even when one exists, the same class of bug
 //     packBins() itself was rewritten to avoid on 2026-08-01.
-//  3. Shutter-duty hard constraint (2026-08-24), only when this run
-//     actually packs a Crisp Gallery item: guarantee a non-host bin can
-//     reach First Floor (the real physical location of the EMP/shutter
-//     console that gates Crisp Gallery access) at no extra loot-placement
-//     cost, by seeding one candidate non-host bin's starting floor-
-//     bitmask with the First-Floor bit before phase 2's search runs — a
-//     single-floor bitmask costs 0 in exhibitTravelCost by construction,
-//     so this represents "visits First Floor" without requiring an
-//     actual First Floor item to be assigned there (visiting a floor and
-//     looting it are different things — the console visit is a location
-//     requirement, not a loot requirement). Every non-host bin is tried;
-//     the lowest-bottleneck one wins, ties going to the lowest player
-//     index.
+//  3. Shutter/EMP hard constraints (2026-08-24, corrected 2026-08-31),
+//     only when this run actually packs a Crisp Gallery item. Real
+//     mechanic (confirmed with the user 2026-08-31): there are TWO
+//     distinct roles here, not one —
+//       a. Console operator — opens the shutters from the First Floor
+//          console. Can be any non-host player. Guaranteed by seeding
+//          one candidate non-host bin's starting floor-bitmask with the
+//          First-Floor bit before phase 2's search runs — a single-floor
+//          bitmask costs 0 in exhibitTravelCost by construction, so this
+//          represents "visits First Floor" without requiring an actual
+//          First Floor item to be assigned there (visiting a floor and
+//          looting it are different things — the console visit is a
+//          location requirement, not a loot requirement). Every non-host
+//          bin is tried; the lowest-bottleneck one wins, ties going to
+//          the lowest player index. This is the ORIGINAL 2026-08-24
+//          design and is unchanged.
+//       b. In-gallery verifier — must be physically inside Crisp Gallery
+//          and confirm presence BEFORE the EMP is triggered; popping it
+//          early (before the shutters are open, or before the verifying
+//          player is actually inside) locks everyone out. This role is
+//          always the HOST, unconditionally — not searched/optimized,
+//          because it isn't interchangeable the way the console operator
+//          is. 2026-08-31 fix: host's bin (bin 0) is unconditionally
+//          seeded with the Crisp-Gallery bit whenever this run packs a
+//          Crisp Gallery item, via the exact same zero-capacity virtual-
+//          bit trick as (a) — see initialMasks() below. Missing entirely
+//          before this fix: a real 4-player scope-out showed the host
+//          landing on Alarm Floor + First with zero Crisp Gallery
+//          presence, which would have made the run's EMP unusable. The
+//          default (non-experimental) value model already gets this
+//          right via packBins()'s HOST_PRIORITY_FLOORS tier — this was a
+//          gap specific to the time-optimized model, which doesn't reuse
+//          that tier (see the reconstruction comment below for why).
+//          Host's own route/bottleneck may get worse as a result (e.g. a
+//          real 2F→1F→Alarm Floor walk) — explicitly accepted; the
+//          requirement is that host is guaranteed Crisp Gallery
+//          presence, not that the crew-wide bottleneck stays minimal.
 //     Design note: an earlier version of this also tried the host as a
-//     last resort, then fell back to an unconstrained search with a
-//     "shutterConstraintRelaxed" warning flag if even that failed.
-//     Dropped (2026-08-24) after proving those paths are unreachable for
-//     any input this function actually receives: the virtual bit costs
-//     zero capacity, so for any bin k, whatever real item placement
-//     already makes the *unconstrained* problem feasible remains
-//     capacity-valid with the bit added, and that bin's cost still stays
-//     within tMax (which already accounts for the worst-case 4-floor
-//     travel cost) — so trying every non-host bin can never fail as long
-//     as the base problem is feasible at all, which callers already
-//     guarantee. If a future change (e.g. a bigger exhibit-floor graph)
-//     ever invalidates that proof, the host-then-relaxed fallback is
-//     straightforward to reintroduce — see this session's design
-//     conversation for the full three-tier version.
+//     last resort *for the console-operator role*, then fell back to an
+//     unconstrained search with a "shutterConstraintRelaxed" warning flag
+//     if even that failed. Dropped (2026-08-24) after proving those paths
+//     are unreachable for any input this function actually receives: a
+//     virtual bit costs zero capacity, so for any bin, whatever real item
+//     placement already makes the *unconstrained* problem feasible
+//     remains capacity-valid with the bit added, and that bin's cost
+//     still stays within tMax (which already accounts for the worst-case
+//     4-floor travel cost) — so trying every non-host bin can never fail
+//     as long as the base problem is feasible at all, which callers
+//     already guarantee. The same proof extends cleanly to two
+//     simultaneous virtual bits on two different bins (they don't share
+//     capacity or interact), which is why the 2026-08-31 host-verifier
+//     bit needed no corresponding fallback/relaxation tier either. If a
+//     future change (e.g. a bigger exhibit-floor graph) ever invalidates
+//     that proof, the host-then-relaxed fallback is straightforward to
+//     reintroduce — see this session's design conversation for the full
+//     three-tier version.
+//
+//     Scope note (2026-08-31): the per-player suggested-walking-order
+//     display this phase used to feed (deriveFloorRoute() via
+//     runOptimizer()'s floorRoutes, shown on guide.html) has been pulled
+//     back out — it's genuinely job/role-sequencing territory, which the
+//     experimental model isn't meant to own piecemeal ahead of a proper
+//     job-modeling design (backlog item 6). deriveFloorRoute() itself
+//     stays in this file, fully tested, as a dormant utility for when
+//     that design happens — see its own doc comment above.
 //
 // Known limitation, accepted for "experimental" status: phase 1's fresh
 // Vault/Loading Bay placement isn't provably guaranteed to leave enough
@@ -1040,13 +1077,19 @@ export function packBinsForTime(items, bins, capacityPerBin) {
     return rec;
   }
 
-  // Seeds `forcedBin`'s starting floor-bitmask with the First-Floor bit —
-  // see the shutter-duty phase-3 doc comment above. null reproduces the
-  // plain unconstrained starting state (all-zero masks) unchanged.
+  // Seeds the starting floor-bitmasks for the two shutter/EMP roles — see
+  // the phase-3 doc comment above. null `forcedBin` reproduces the plain
+  // unconstrained starting state for the console-operator role unchanged;
+  // the host (bin 0) in-gallery-verifier bit is independent of
+  // `forcedBin` entirely — it applies whenever `needsShutters`, even in
+  // the `solveFor(null)` fallback/solo-run case.
+  const needsShutters = exhibit.some(it => it.floor === 'Crisp Gallery');
   const FIRST_FLOOR_BIT = 1 << EXHIBIT_FLOOR_INDEX.get('First');
+  const CRISP_GALLERY_BIT = 1 << EXHIBIT_FLOOR_INDEX.get('Crisp Gallery');
   function initialMasks(forcedBin) {
     const m = zeros.slice();
-    if (forcedBin !== null) m[forcedBin] = FIRST_FLOOR_BIT;
+    if (needsShutters) m[0] = CRISP_GALLERY_BIT; // host: in-gallery EMP verifier, always
+    if (forcedBin !== null) m[forcedBin] = FIRST_FLOOR_BIT; // console operator: searched, non-host
     return m;
   }
 
@@ -1064,13 +1107,15 @@ export function packBinsForTime(items, bins, capacityPerBin) {
     return null;
   }
 
-  // Shutter-duty hard constraint search — see phase-3 doc comment above
-  // for the full rationale, including why this only tries non-host bins
-  // (proven to always succeed for any packable input, so a host-last-
-  // resort tier and a relaxed-fallback warning aren't reachable code and
-  // were dropped). Ties resolve to the lowest player index, same
-  // convention used elsewhere in this file.
-  const needsShutters = exhibit.some(it => it.floor === 'Crisp Gallery');
+  // Console-operator search — see phase-3 doc comment above for the full
+  // rationale, including why this only tries non-host bins (proven to
+  // always succeed for any packable input, so a host-last-resort tier
+  // and a relaxed-fallback warning aren't reachable code and were
+  // dropped). Ties resolve to the lowest player index, same convention
+  // used elsewhere in this file. Host's own in-gallery-verifier bit
+  // (`needsShutters`, above) is unconditional and already baked into
+  // every `initialMasks()` call this search makes, including the
+  // fallback below.
   let shutterOperatorIndex = null;
   let winner = null;
 
@@ -1276,66 +1321,34 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   // packBinsForTime() can't find a feasible split (see its own doc
   // comment) — always safe, since that's the split this function would
   // have produced anyway.
+  // shutterOperatorIndex (console operator) and neededGalleryPresence
+  // (whether host's in-gallery-verifier guarantee applied this run — see
+  // packBinsForTime()'s phase-3 doc comment) are kept on the result
+  // object for tests/the dev-only compare-packing.mjs CLI, but
+  // deliberately NOT surfaced as guide.html UI (2026-08-31, user
+  // decision): the experimental view shouldn't accumulate features the
+  // normal model lacks, which would nudge users toward an unfinished
+  // model ahead of real job/role modeling (backlog item 6) existing to
+  // back it up. The per-player suggested-walking-order display
+  // (deriveFloorRoute() via a floorRoutes field) that used to live here
+  // has been removed entirely for the same reason — that's real
+  // job/role-sequencing territory, which the user wants built once,
+  // properly, for BOTH models together under item 6, not shipped
+  // experimental-only piecemeal. deriveFloorRoute() itself stays in this
+  // file, fully tested, as a dormant utility for that future work.
   let shutterOperatorIndex = null;
-  // floorRoutes (2026-08-24): suggested per-player floor-visit order,
-  // display-only — see deriveFloorRoute()'s doc comment above. Only ever
-  // computed for a split that was actually time-optimized, same gating
-  // as shutterOperatorIndex; null otherwise (mirrors that field's
-  // default). Root-per-role: the shutter operator always roots at First
-  // (guaranteed reachable via the shutter-duty virtual bit above); the
-  // host roots at Second if present, else Crisp Gallery — see fix 2
-  // below for why. Everyone else gets no preference and falls back to
-  // deriveFloorRoute()'s own deterministic default (which is itself
-  // elevator-aware — see that function's doc comment).
-  //
-  // Two 2026-08-24 fixes, found together while correcting
-  // exhibitTravelCost()'s elevator assumption (see ELEVATOR_FLOORS
-  // above exhibitTravelCost()):
-  // 1. The shutter operator's floorSet is seeded with 'First' even when
-  //    they have no REAL First-Floor item — without this, their
-  //    preferredRoot: 'First' request silently failed the
-  //    `floors.includes(preferredRoot)` check inside deriveFloorRoute()
-  //    (since 'First' wasn't actually in their real item floors) and
-  //    fell back to the generic default, producing NO route guidance at
-  //    all for the one player who most needs "go to First" guidance —
-  //    exactly what both of this session's real scope-outs did (a
-  //    Crisp-Gallery-only operator bag). Mirrors the same virtual-bit
-  //    concept packBinsForTime()'s own search already uses to decouple
-  //    "visited" from "looted" for this exact player.
-  // 2. The host's priority flipped to 'Second' before 'Crisp Gallery' —
-  //    at the time, Second was the only one of the two that was really
-  //    free to reach via elevator. 2026-08-30 update: Crisp Gallery
-  //    joined ELEVATOR_FLOORS (it's physically the same floor as Second,
-  //    just a different room — see ELEVATOR_FLOORS's own doc comment),
-  //    so this priority order is no longer a real cost difference,
-  //    just a stable tie-break between two equally-free roots. Left
-  //    as Second-first rather than reverting to Crisp-Gallery-first
-  //    (packBins()'s unrelated BIN-assignment sub-rank, which is about
-  //    the EMP-verification value-model rationale, not route realism)
-  //    since there's no reason to churn it now that both are valid.
-  let floorRoutes = null;
+  let neededGalleryPresence = false;
   if (state.experimentalPacking) {
     const itemsForTime = packedBags.flatMap(b => b.items).map(i => ({
       ...i,
       order: orderById.get(i.id),
       timeWeight: timeWeightFor(itemById(catalog, i.id))
     }));
+    neededGalleryPresence = itemsForTime.some(it => it.floor === 'Crisp Gallery');
     const repacked = packBinsForTime(itemsForTime, state.players, bagCapacityPerPlayer);
     if (repacked) {
       packedBags = repacked.bags;
-      // Only meaningful for a split that was actually time-optimized —
-      // the default above already covers the null-repacked (default
-      // split kept) case correctly.
       shutterOperatorIndex = repacked.shutterOperatorIndex;
-      floorRoutes = packedBags.map((bag, i) => {
-        const floorSet = new Set(bag.items.map(it => it.floor).filter(f => EXHIBIT_FLOORS.has(f)));
-        if (i === shutterOperatorIndex) floorSet.add('First'); // virtual visit — fix 1 above
-        const preferredRoot =
-          i === shutterOperatorIndex ? 'First' :
-          i === 0 ? (floorSet.has('Second') ? 'Second' : (floorSet.has('Crisp Gallery') ? 'Crisp Gallery' : null)) :
-          null;
-        return deriveFloorRoute(floorSet, preferredRoot);
-      });
     }
   }
 
@@ -1385,7 +1398,7 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
     helperBonusEach, planningFee,
     overflow, attempted, allBuyerItemsFit, mandatoryWeightSum, bcIneligibleIds,
     chosenIds, bcIdsSet, bags,
-    shutterOperatorIndex, floorRoutes,
+    shutterOperatorIndex, neededGalleryPresence,
     ineligibleCount: valid.length - eligible.length
   };
 }

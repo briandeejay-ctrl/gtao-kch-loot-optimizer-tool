@@ -45,7 +45,6 @@
   <div class="step">
     <span class="step-num">§</span><span class="step-title">Who Grabs What</span>
     <p class="hint" id="experimentalPackingNote" style="display:none; margin-top:16px;">⚡ Experimental: time-optimized packing is on — bags below are balanced for loot-time + floor travel between players, not just maximum bag value placement. Total secondary value is unaffected. Toggle this off on Scope &amp; Setup for the default split.</p>
-    <p class="hint" id="shutterDutyNote" style="display:none; margin-top:4px;"></p>
     <div class="step-body" id="itemsList"></div>
   </div>
 
@@ -274,20 +273,15 @@ function renderItemsList(r){
   container.innerHTML = '';
   document.getElementById('experimentalPackingNote').style.display = state.experimentalPacking ? '' : 'none';
 
-  // Shutter-duty hint (2026-08-24) — non-binding suggestion for who's
-  // best positioned to operate the EMP/shutter console on First Floor,
-  // computed by runOptimizer() itself as part of the experimental
-  // packer's own search (see kch-model.js's packBinsForTime doc comment).
-  // Only meaningful when experimental packing actually produced a
-  // time-optimized split and this run packs a Crisp Gallery item — both
-  // already folded into whether shutterOperatorIndex is non-null.
-  const shutterNote = document.getElementById('shutterDutyNote');
-  if (state.experimentalPacking && Number.isInteger(r.shutterOperatorIndex)) {
-    shutterNote.style.display = '';
-    shutterNote.innerHTML = `🔑 Suggested for shutters: <b>${playerLabel(r.shutterOperatorIndex)}</b> — guaranteed low-cost First Floor access this run.`;
-  } else {
-    shutterNote.style.display = 'none';
-  }
+  // Shutter/EMP role guarantees (console operator + host's in-gallery
+  // verifier — see kch-model.js's packBinsForTime doc comment) are
+  // deliberately NOT surfaced here (2026-08-31, user decision): the
+  // experimental view shouldn't accumulate UI the normal model lacks,
+  // which would nudge users toward an unfinished model ahead of real
+  // job/role modeling (backlog item 6). Both roles are still enforced
+  // silently inside the packing logic; runOptimizer()'s
+  // shutterOperatorIndex/neededGalleryPresence fields exist for
+  // tests/compare-packing.mjs only.
 
   for (let i = 0; i < state.players; i++){
     const bag = r.bags[i];
@@ -298,23 +292,6 @@ function renderItemsList(r){
     head.className = 'player-card-head';
     head.innerHTML = `<span class="dot"></span><span>${playerLabel(i)}</span>`;
     card.appendChild(head);
-
-    // Suggested floor-visit order (2026-08-24) — display-only, derived by
-    // deriveFloorRoute() in kch-model.js from the bag runOptimizer()
-    // already decided; never changes bag contents/value. Only shown when
-    // there's an actual order to suggest (2+ floors touched) — a route
-    // array of length 1 or 0 has nothing worth stating. A repeated floor
-    // name (e.g. a player whose exhibit floors form a branch around
-    // First) renders exactly as given, not hidden, so the route stays
-    // honest about a real backtrack rather than implying one smooth lap.
-    const route = state.experimentalPacking && Array.isArray(r.floorRoutes) ? r.floorRoutes[i] : null;
-    if (route && route.length >= 2) {
-      const routeNote = document.createElement('p');
-      routeNote.className = 'hint';
-      routeNote.style.margin = '2px 0 8px';
-      routeNote.textContent = `Suggested order: ${route.join(' → ')}`;
-      card.appendChild(routeNote);
-    }
 
     if (bag.items.length === 0){
       const empty = document.createElement('p');

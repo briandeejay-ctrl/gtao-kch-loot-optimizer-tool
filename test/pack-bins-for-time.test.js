@@ -230,7 +230,12 @@ test('runOptimizer: skipPreps excludes the 5 glass-cutter items from selection e
 // whenever Crisp Gallery is packed and there's more than one bag,
 // shutterOperatorIndex must always be a valid non-host bin index — never
 // null, never 0 — for any packable input (see packBinsForTime()'s own
-// doc comment for the proof this relies on).
+// doc comment for the proof this relies on). Also asserts the 2026-08-31
+// host in-gallery-verifier invariant: neededGalleryPresence must always
+// exactly track whether any packed item is on Crisp Gallery, regardless
+// of crew size (unlike shutterOperatorIndex, this doesn't need players
+// >= 2 — it's trivially satisfied in a solo run, but the flag itself
+// still reports true).
 test('fuzz: experimentalPacking never overflows a bag and never changes value/selection vs the default split', () => {
   let checked = 0;
   let shutterChecked = 0;
@@ -294,6 +299,12 @@ test('fuzz: experimentalPacking never overflows a bag and never changes value/se
     } else {
       assert.equal(experimentalResult.shutterOperatorIndex, null, `trial ${trial}: shutterOperatorIndex must be null when Crisp Gallery isn't packed`);
     }
+
+    assert.equal(
+      experimentalResult.neededGalleryPresence,
+      Boolean(packsCrispGallery),
+      `trial ${trial}: neededGalleryPresence must exactly track whether a Crisp Gallery item was packed`
+    );
   }
   assert.ok(checked > 0);
   assert.ok(shutterChecked > 0, 'expected at least one trial to actually exercise the shutter-duty path');
@@ -357,4 +368,59 @@ test('shutter-duty: designates a non-host bin with genuine First Floor presence'
   assert.ok(floors.has('First'), 'the designated shutter bin should end up with genuine First Floor presence in this fixture');
   const marginal = exhibitTravelCost(new Set([...floors, 'First'])) - exhibitTravelCost(floors);
   assert.equal(marginal, 0, 'adding First Floor to its own floor set must cost nothing — it is already present');
+});
+
+// Host in-gallery-verifier guarantee (2026-08-31) — the SEPARATE role
+// from the console operator above (see packBinsForTime()'s phase-3 doc
+// comment): host must always be confirmed present in Crisp Gallery
+// before the EMP fires. This fixture is built so the two roles are
+// forced to actually conflict, proving the guarantee changes the outcome
+// rather than being satisfied by coincidence:
+//
+// 'alarm' (Alarm Floor) and 'crisp' (Crisp Gallery) each weigh exactly
+// one full bag (100/100), so with 2 bins there are only two possible
+// assignments. Pairing Alarm Floor with a real Crisp Gallery VISIT (even
+// just the virtual one) costs a real 2-hop detour through First
+// (exhibitTravelCost({Alarm Floor, Crisp Gallery}) = 10) — so if host
+// ends up with 'alarm', host's bottleneck is 10 (travel) + 1 (alarm's
+// own timeWeight) = 11, forced to pay for a Crisp Gallery visit it never
+// gets credit for looting. If host instead gets the REAL 'crisp' item,
+// its own bag costs just 0 (Crisp Gallery is elevator-served) + 1
+// (timeWeight) = 1, and 'alarm' lands on the other player at 5 (one hop
+// to First) + 1 = 6. The crew-wide bottleneck for that split is 6,
+// strictly better than 11 — so an exact bottleneck-minimizing search
+// MUST place the real 'crisp' item with host, never 'alarm'. Before the
+// 2026-08-31 fix, both assignments tied at bottleneck 6 (host carried no
+// implicit Crisp Gallery cost), and the pre-existing capacity tie-break
+// would have handed host 'alarm' instead — exactly the real bug this
+// fixture is modeled on.
+test('host in-gallery verifier: host is guaranteed the low-cost Crisp Gallery presence, even over an equally-sized Alarm Floor item', () => {
+  const items = [
+    { id: 'alarm', value: 10000, weightUnits: 100, floor: 'Alarm Floor', timeWeight: 1, order: 0 },
+    { id: 'crisp', value: 10000, weightUnits: 100, floor: 'Crisp Gallery', timeWeight: 1, order: 1 }
+  ];
+  const result = packBinsForTime(items, 2, 100);
+  assert.ok(result);
+  const hostFloors = new Set(result.bags[0].items.map(i => i.floor));
+  assert.ok(hostFloors.has('Crisp Gallery'), 'host must end up with the Crisp Gallery item, not Alarm Floor');
+  assert.ok(!hostFloors.has('Alarm Floor'), 'host must NOT end up with Alarm Floor here — that would mean the guarantee was not enforced');
+  // packBinsForTime()'s returned items don't carry timeWeight (only
+  // id/value/weightUnits/floor) — re-attach the known value (both items
+  // are timeWeight 1) before measuring, same workaround the tMax
+  // regression test above uses.
+  const bottleneck = Math.max(...result.bags.map(b =>
+    binTimeCost({ items: b.items.map(i => ({ floor: i.floor, timeWeight: 1 })) })
+  ));
+  assert.equal(bottleneck, 6, 'the achieved bottleneck must be the true minimum (6), not the un-enforced tie (also 6, but via the wrong assignment) or the rejected 11');
+});
+
+// Gate (2026-08-31): when Crisp Gallery isn't packed at all, the host
+// guarantee never applies — runOptimizer()'s neededGalleryPresence stays
+// false, and host's own bag/bottleneck is completely unaffected by this
+// fix (bit-for-bit identical to pre-2026-08-31 behavior).
+test('host in-gallery verifier gate: no Crisp Gallery item packed leaves neededGalleryPresence false and host unaffected', () => {
+  const loot = lootFor({ '0-A': 95000, '1-B': 29000 }); // Alarm Floor + First only, no Crisp Gallery
+  const result = runOptimizer(stateFor(loot, { experimentalPacking: true, players: 2 }), catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);
+  assert.equal(result.neededGalleryPresence, false);
+  assert.equal(result.shutterOperatorIndex, null);
 });

@@ -104,14 +104,10 @@ function printRun(label, r) {
     }
   });
   if (Number.isInteger(r.shutterOperatorIndex)) {
-    console.log(`  🔑 Suggested for shutters: Player ${r.shutterOperatorIndex + 1} (guaranteed low-cost First Floor access)`);
+    console.log(`  🔑 Console operator: Player ${r.shutterOperatorIndex + 1} (guaranteed low-cost First Floor access)`);
   }
-  if (Array.isArray(r.floorRoutes)) {
-    r.floorRoutes.forEach((route, i) => {
-      if (route && route.length >= 2) {
-        console.log(`  🧭 Player ${i + 1} suggested order: ${route.join(' → ')}`);
-      }
-    });
+  if (r.neededGalleryPresence) {
+    console.log(`  🛡️ Host (Player 1) guaranteed Crisp Gallery presence this run (in-gallery EMP verifier)`);
   }
 }
 
