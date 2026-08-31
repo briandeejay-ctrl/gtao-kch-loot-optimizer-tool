@@ -43,7 +43,7 @@
   </div>
   <div style="margin-bottom:14px;">
     <label class="field-label">Value ($)</label>
-    <input type="number" id="entryDialogValue" min="0" placeholder="Value $">
+    <input type="number" id="entryDialogValue" min="0" inputmode="numeric" placeholder="Value $">
   </div>
   <label class="bay-check-wrap" style="margin-bottom:20px;">
     <input type="checkbox" id="entryDialogBc">
@@ -454,6 +454,15 @@ function initEntryDialog(){
   const dialog = document.getElementById('entryDialog');
   document.getElementById('entryDialogCancelBtn').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
+  // Digits only (2026-08-31 fix, mirrors index.html's loot row inputs) —
+  // type="number" already rejects letters, but not '-', '+', '.', or
+  // 'e', all valid partial number syntax the browser still lets you
+  // type; a stray '-' would silently save a real negative value with
+  // nothing downstream clamping it. Strip anything non-digit as typed.
+  document.getElementById('entryDialogValue').addEventListener('input', e => {
+    const digits = e.target.value.replace(/[^0-9]/g, '');
+    if (digits !== e.target.value) e.target.value = digits;
+  });
   document.getElementById('entryDialogSaveBtn').addEventListener('click', () => {
     const item = state.loot.find(l => l.itemId === currentEntryItemId);
     const cat = itemById(LOOT_CATALOG, currentEntryItemId);

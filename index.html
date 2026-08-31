@@ -506,9 +506,22 @@ function renderLootList(){
         controls.appendChild(wrap);
       } else {
         const valInput = document.createElement('input');
-        valInput.type = 'number'; valInput.placeholder = 'Value $'; valInput.min = '0';
+        valInput.type = 'number'; valInput.placeholder = 'Value $'; valInput.min = '0'; valInput.inputMode = 'numeric';
         valInput.value = item.value; valInput.dataset.f = 'val';
-        valInput.addEventListener('input', e => { item.value = e.target.value === '' ? '' : Number(e.target.value); renderAll(false); });
+        valInput.addEventListener('input', e => {
+          // Digits only (2026-08-31 fix) — type="number" already rejects
+          // letters, but not '-', '+', '.', or 'e', all valid partial
+          // number syntax the browser still lets you type. A stray '-'
+          // silently produced a real negative Number() value with
+          // nothing downstream clamping it — nonsensical everywhere a
+          // loot value flows (the optimizer, the CSV export, the
+          // not-yet-built share link). Strip anything non-digit as
+          // typed, same rejection behavior as letters.
+          const digits = e.target.value.replace(/[^0-9]/g, '');
+          if (digits !== e.target.value) e.target.value = digits;
+          item.value = digits === '' ? '' : Number(digits);
+          renderAll(false);
+        });
         controls.appendChild(valInput);
       }
 
