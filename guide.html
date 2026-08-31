@@ -44,7 +44,7 @@
 
   <div class="step">
     <span class="step-num">§</span><span class="step-title">Who Grabs What</span>
-    <p class="hint" id="experimentalPackingNote" style="display:none; margin-top:16px;">⚡ Experimental: time-optimized packing is on — bags below are balanced for loot-time + floor travel between players, not just maximum bag value placement. Total secondary value is unaffected. Toggle this off on Scope &amp; Setup for the default split.</p>
+    <p class="hint" id="experimentalPackingNote" style="display:none; margin-top:16px;">⚡ Experimental: time-optimized packing is on — bags below are balanced for loot-time + floor travel between players. Total secondary value is unaffected. Toggle this off on Scope &amp; Setup for the default split.</p>
     <div class="step-body" id="itemsList"></div>
   </div>
 
@@ -272,6 +272,16 @@ function renderItemsList(r){
   const container = document.getElementById('itemsList');
   container.innerHTML = '';
   document.getElementById('experimentalPackingNote').style.display = state.experimentalPacking ? '' : 'none';
+
+  // Shutter/EMP role guarantees (console operator + host's in-gallery
+  // verifier — see kch-model.js's packBinsForTime doc comment) are
+  // deliberately NOT surfaced here (2026-08-31, user decision): the
+  // experimental view shouldn't accumulate UI the normal model lacks,
+  // which would nudge users toward an unfinished model ahead of real
+  // job/role modeling (backlog item 6). Both roles are still enforced
+  // silently inside the packing logic; runOptimizer()'s
+  // shutterOperatorIndex/neededGalleryPresence fields exist for
+  // tests/compare-packing.mjs only.
 
   for (let i = 0; i < state.players; i++){
     const bag = r.bags[i];

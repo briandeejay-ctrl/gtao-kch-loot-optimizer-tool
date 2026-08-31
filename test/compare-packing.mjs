@@ -103,6 +103,12 @@ function printRun(label, r) {
       }
     }
   });
+  if (Number.isInteger(r.shutterOperatorIndex)) {
+    console.log(`  🔑 Console operator: Player ${r.shutterOperatorIndex + 1} (guaranteed low-cost First Floor access)`);
+  }
+  if (r.neededGalleryPresence) {
+    console.log(`  🛡️ Host (Player 1) guaranteed Crisp Gallery presence this run (in-gallery EMP verifier)`);
+  }
 }
 
 const defaultResult = runOptimizer(buildState(false), catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);
