@@ -40,6 +40,7 @@ test('compareCrewSizes returns exactly 4 entries, players 1 through 4 in order',
     assert.ok('secondaryShareEach' in r);
     assert.ok('secondaryBagValueWithElite' in r);
     assert.ok('secondaryShareEachWithElite' in r);
+    assert.ok('eliteAchievable' in r);
   }
 });
 
@@ -119,4 +120,43 @@ test('No-Elite and With-Elite columns can diverge sharply when Buyer\'s Choice g
 
   assert.equal(at1.secondaryShareEach, 1010000, 'without Elite, the pack keeps B-A plus one marked item');
   assert.equal(at1.secondaryShareEachWithElite, 20000, 'with Elite, both marked items are forced in, crowding out B-A entirely');
+});
+
+// Real reported bug (2026-09-01): guide.html's "BEST" tag on the With-Elite
+// column was landing on a crew size where Elite Challenge is flatly
+// impossible, because that column falls back to the same unconstrained
+// pack the No-Elite column already shows whenever Elite can't actually be
+// attempted — and an undivided solo share is often the numerically largest
+// raw number in the column regardless. `eliteAchievable` is the fix: it's
+// false for exactly this fallback case, so guide.html can exclude it from
+// "best" consideration.
+test('eliteAchievable is false at 1 player when a marked item requires 2+ players (Crisp Gallery), even though that row\'s raw share is the column\'s numeric max', () => {
+  // 2-H (Crisp Gallery) requires minPlayers: 2 — flatly unreachable solo.
+  // Marking it alongside 0-A (reachable at every crew size) satisfies the
+  // >=2-picks minimum, so `attempted` is true at 1 player too, but
+  // `allBuyerItemsFit` can't be — 2-H drops out of `eligible` entirely, so
+  // packing falls back to the unconstrained value-max pack (same as the
+  // No-Elite column would show for the same reachable items).
+  const state = {
+    primaryId: 'la-derniere-debauche', difficulty: 'normal', weekly: 'first',
+    players: 2, elite: 'no',
+    loot: catalog.map(cat => {
+      if (cat.itemId === 'B-A') return { itemId: cat.itemId, value: 500000, buyersChoice: false };
+      if (cat.itemId === '0-A') return { itemId: cat.itemId, value: 10000, buyersChoice: true };
+      if (cat.itemId === '2-H') return { itemId: cat.itemId, value: 20000, buyersChoice: true };
+      return { itemId: cat.itemId, value: '', buyersChoice: false };
+    })
+  };
+  const results = compareCrewSizes(state, catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);
+  const at1 = results.find(r => r.players === 1);
+  const at2 = results.find(r => r.players === 2);
+
+  assert.equal(at1.eliteAchievable, false, 'Elite cannot be achieved solo when a marked item requires 2+ players');
+  assert.equal(at2.eliteAchievable, true, 'Elite is genuinely achievable at 2 players — both marks reachable and packed');
+  // Sanity check this is really the "would be mistagged" shape, not just an
+  // unreachable edge case that happens to also be numerically small: the
+  // 1-player fallback's undivided share really is the column's max.
+  assert.ok(at1.secondaryShareEachWithElite > at2.secondaryShareEachWithElite,
+    `expected the 1-player fallback (${at1.secondaryShareEachWithElite}) to exceed the genuine 2-player Elite result (${at2.secondaryShareEachWithElite}) — otherwise this test doesn't exercise the real bug shape`);
+  assert.ok(results.every(r => r.eliteAchievable !== undefined), 'eliteAchievable must be present on every row for guide.html to filter on');
 });

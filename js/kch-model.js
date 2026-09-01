@@ -1441,6 +1441,22 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
 // already handles that per player count, so a smaller crew's lower share
 // here can genuinely mean "fewer items were reachable," not just "a
 // bigger total got split more ways." This applies to both columns.
+//
+// `eliteAchievable` (2026-09-01, real bug fix): whether the With-Elite
+// pack at THIS crew size is a genuine Elite Challenge result — both
+// required marks reachable and bin-packed in — as opposed to a fallback
+// to the same unconstrained value-max pack the No-Elite column already
+// shows (see runOptimizer's `eliteEligible`, which this mirrors exactly:
+// `attempted && allBuyerItemsFit`). Added because a Buyer's Choice pick
+// with `minPlayers: 2` (e.g. any Crisp Gallery item) makes Elite flatly
+// non-soloable — at 1 player that item drops out of `eligible` entirely,
+// `attempted` stays true (elite:'yes' plus >=2 marks) but
+// `allBuyerItemsFit` goes false, so the column falls back to the
+// unconstrained pack. A single undivided player's raw share from that
+// fallback is often the numerically LARGEST number in the whole column
+// (no split), which without this flag could get flagged "best" by a
+// caller despite Elite being impossible there — a real reported bug.
+// guide.html's "BEST" tag only ever considers rows where this is true.
 export function compareCrewSizes(state, catalog, bagCapacityPerPlayer, bonusConstants) {
   const results = [];
   for (let players = 1; players <= 4; players++) {
@@ -1451,7 +1467,8 @@ export function compareCrewSizes(state, catalog, bagCapacityPerPlayer, bonusCons
       secondaryBagValue: withoutElite.secondaryBagValue,
       secondaryShareEach: withoutElite.secondaryShareEach,
       secondaryBagValueWithElite: withElite.secondaryBagValue,
-      secondaryShareEachWithElite: withElite.secondaryShareEach
+      secondaryShareEachWithElite: withElite.secondaryShareEach,
+      eliteAchievable: withElite.attempted && withElite.allBuyerItemsFit
     });
   }
   return results;

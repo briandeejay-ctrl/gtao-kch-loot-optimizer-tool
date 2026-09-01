@@ -499,7 +499,17 @@ function renderCrewSizeComparison(){
   // items in at one crew size can shift which size wins for that column
   // without affecting the other.
   const bestWithout = Math.max(...results.map(r => r.secondaryShareEach));
-  const bestWith = Math.max(...results.map(r => r.secondaryShareEachWithElite));
+  // With-Elite "best" is restricted to rows where Elite is actually
+  // achievable at that crew size (2026-09-01 bug fix). A Buyer's Choice
+  // mark on a Crisp Gallery item (minPlayers: 2) makes Elite non-soloable
+  // — at 1 player the pack falls back to the same unconstrained value-max
+  // pack the No-Elite column shows, and an undivided solo share is often
+  // the numerically largest number in the column despite Elite being
+  // impossible there. Real report: that fallback number was getting
+  // tagged BEST on the With-Elite column at 1 player. See
+  // compareCrewSizes()'s `eliteAchievable` field in kch-model.js.
+  const eliteRows = results.filter(r => r.eliteAchievable);
+  const bestWith = eliteRows.length ? Math.max(...eliteRows.map(r => r.secondaryShareEachWithElite)) : 0;
 
   const head = document.createElement('div');
   head.className = 'crew-compare-row head';
@@ -509,7 +519,7 @@ function renderCrewSizeComparison(){
   results.forEach(r => {
     const isCurrent = r.players === state.players;
     const isBestWithout = bestWithout > 0 && r.secondaryShareEach === bestWithout;
-    const isBestWith = bestWith > 0 && r.secondaryShareEachWithElite === bestWith;
+    const isBestWith = bestWith > 0 && r.eliteAchievable && r.secondaryShareEachWithElite === bestWith;
     const label = `${r.players} Player${r.players > 1 ? 's' : ''}`;
     const row = document.createElement('div');
     row.className = 'crew-compare-row' + (isCurrent ? ' current' : '');

@@ -888,6 +888,27 @@ confirmation dialog on unlock.
   mean fewer reachable items, not just a bigger total split more ways;
   `guide.html`'s panel says this explicitly rather than leaving it to be
   inferred from the numbers alone.
+  **Real bug fix, 2026-09-01: the With-Elite column's "BEST" tag could
+  land on a crew size where Elite Challenge is flatly impossible.** A
+  Buyer's Choice mark on a `minPlayers: 2` item (any Crisp Gallery item)
+  makes Elite non-soloable — at 1 player that item drops out of
+  `eligible` entirely, so the column falls back to the same unconstrained
+  value-max pack the No-Elite column already shows for that crew size.
+  An undivided solo share from that fallback is often the numerically
+  *largest* raw number in the whole column (nobody to split with), so the
+  old `Math.max()`-over-every-row logic tagged it "BEST" regardless —
+  user report + screenshot, a genuinely non-soloable Elite scope showing
+  a 1-Player "BEST" flag on the With-Elite column. Fixed by adding
+  `eliteAchievable` to each row `compareCrewSizes()` returns
+  (`withElite.attempted && withElite.allBuyerItemsFit` — mirrors
+  `runOptimizer()`'s own `eliteEligible` exactly: a genuine Elite result,
+  not a fallback wearing the column's raw-share metric), and gating
+  `guide.html`'s `bestWith`/`isBestWith` computation on it — only rows
+  where Elite is actually achievable at that crew size are eligible for
+  the tag at all. A scope where Elite is unachievable at *every* crew
+  size (rare, but possible) now shows no "BEST" tag on that column at
+  all, rather than tagging a fallback number — the correct generalization
+  of the same fix, not a special case for 1 player specifically.
 - **Buyer's Choice *packing* is conditional on Elite Challenge, and needs
   at least 2 picks — but the Buyer's Request *bonus* is not conditional on
   Elite (decoupled 2026-08-07, see below).** Marking up to three items as
