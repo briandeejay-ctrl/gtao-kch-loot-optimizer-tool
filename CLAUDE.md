@@ -1598,7 +1598,12 @@ items it links to for full design detail):**
    very small, one new pure function mirroring `buildScopeCsv()` plus a
    new button; not merged into the existing scope export (that's part of
    why a similar-looking change in PR #4 was rejected — see that PR's
-   review comments).
+   review comments). **Deliberately skipped 2026-09-11** (user call, right
+   after item 1 shipped): doesn't seem useful enough on its own merit —
+   parked rather than built, revisit only if it's independently requested
+   by more than one other user. Not the same as "not designed" (item 3's
+   original bar) — this one's fully spec'd and ready to pick up the moment
+   real demand shows up.
 3. **A shareable read-only link to a scope-out**, for handing teammates
    the shopping list/maps without screenshotting — fully designed
    (plaintext delimited URL encoding, no JSON/base64/dependencies, no
