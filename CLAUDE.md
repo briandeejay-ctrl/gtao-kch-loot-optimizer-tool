@@ -1586,7 +1586,14 @@ items it links to for full design detail):**
 
 1. **Add the existing "Copy as CSV" scope-export button to `guide.html`
    too** (currently `index.html`-only) — trivial, zero `kch-model.js`
-   changes, pure UI duplication of an existing button.
+   changes, pure UI duplication of an existing button. **Shipped
+   2026-09-11**: `guide.html` imports `buildScopeCsv` and gained its own
+   `initCopyCsvControls()`, a straight duplicate of `index.html`'s
+   (button markup, click handler, "Copied!"/`.copied` revert state) —
+   consistent with this app's established "duplicate, don't share render
+   code" convention (`map-view.html`/`map-scope.html` already do this for
+   their own render helpers). Verified in-browser: clicking produces the
+   same 34-line, catalog-ordered CSV as `index.html`.
 2. **A separate "Copy as CSV" for the Crew Size Comparison table** —
    very small, one new pure function mirroring `buildScopeCsv()` plus a
    new button; not merged into the existing scope export (that's part of
