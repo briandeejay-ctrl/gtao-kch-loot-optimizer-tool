@@ -259,6 +259,17 @@ function renderBagSection(r){
     } else {
       warnBox.textContent = `Heads up: your Buyer's Choice picks exceed expected capacity — double check what you marked. The guide packed the best-value subset it could, but the Buyer's Request and Elite Challenge bonuses are forfeited.`;
     }
+  } else if (r.bcOverCap){
+    // Elite-independent counterpart to the r.overflow weight branch above
+    // (2026-09-12) — Buyer's Choice items are always collected as a single
+    // unit, so combined weight over 100 is never achievable no matter the
+    // crew size, whether or not Elite Challenge is even toggled on. With
+    // Elite off, r.overflow is always false by definition (it's gated on
+    // `attempted`), but the Buyer's Request bonus can still be silently
+    // unearnable for this same reason — this branch is what surfaces that
+    // to the host instead of leaving it a silent $0 line in Finale Result.
+    warnBox.style.display = 'block';
+    warnBox.textContent = `Heads up: your Buyer's Choice picks exceed expected capacity — double check what you marked. Buyer's Choice items can never all be collected together above 100 combined weight, so the Buyer's Request bonus can't be earned for this combination.`;
   } else {
     warnBox.style.display = 'none';
   }

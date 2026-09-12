@@ -1275,27 +1275,40 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   const attempted = state.elite === 'yes' && bcIdsSet.size >= 2;
   const canLockMandatory = attempted && bcIneligibleIds.length === 0;
 
-  let secondaryBagValue, allBuyerItemsFit, mandatoryWeightSum, packedBags;
+  // Combined weight of every reachable marked (Buyer's Choice) item —
+  // computed unconditionally, regardless of Elite status (real bug fix,
+  // 2026-09-12, extended same day). Buyer's Choice items are collected as
+  // a single unit; their combined weight can never exceed one bag's
+  // capacity (100), full stop, no matter the crew size OR whether Elite
+  // Challenge is even being attempted — confirmed directly: "it is not
+  // possible for the heist to have elite challenge items going over 100
+  // weight, PERIOD, even if there are more than one player." This has to
+  // be computed outside the canLockMandatory branch below because the
+  // Buyer's Request bonus is earned independently of the Elite toggle
+  // (see the 2026-08-07 decoupling note above runOptimizer) — an
+  // in-game-impossible combo can't retroactively become legal just
+  // because Elite was never attempted. See bcWithinCap's use in
+  // buyerRequestEarned and bcOverCap further down.
+  const mandatoryWeightSum = eligible
+    .filter(l => l.buyersChoice)
+    .reduce((s, l) => s + itemById(catalog, l.itemId).weight, 0);
+  const bcWithinCap = mandatoryWeightSum <= bagCapacityPerPlayer;
+
+  let secondaryBagValue, allBuyerItemsFit, packedBags;
 
   if (canLockMandatory) {
     const mandatory = eligible.filter(l => l.buyersChoice).map(toItem);
     const optional = eligible.filter(l => !l.buyersChoice).map(toItem);
-    mandatoryWeightSum = mandatory.reduce((s, i) => s + i.weightUnits, 0);
 
-    // Flat cap, independent of crew size (real bug fix, 2026-09-12): Buyer's
-    // Choice items are collected as a single unit for Elite Challenge
-    // purposes, so their combined weight can never exceed one bag's
-    // capacity — confirmed directly, "it is not possible for the heist to
-    // have elite challenge items going over 100 weight, PERIOD, even if
-    // there are more than one player." packBins() alone doesn't know this:
-    // given 2+ players it's perfectly happy to spread the mandatory set
-    // across separate bins (e.g. 100 in one bag, 50 in another) and report
-    // that as a genuine fit, which is not how Buyer's Choice pickup
-    // actually works in-game. Checked BEFORE calling packBins() for the
-    // mandatory set so the cap holds at every crew size, not just solo
-    // (where packBins() already caught this structurally for free, since a
-    // lone bin's capacity IS the 100 cap — this fix is a no-op there).
-    const packed = mandatoryWeightSum <= bagCapacityPerPlayer
+    // packBins() alone doesn't know about the flat cap above: given 2+
+    // players it's perfectly happy to spread the mandatory set across
+    // separate bins (e.g. 100 in one bag, 50 in another) and report that
+    // as a genuine fit, which is not how Buyer's Choice pickup actually
+    // works in-game. Checked BEFORE calling packBins() for the mandatory
+    // set so the cap holds at every crew size, not just solo (where
+    // packBins() already caught this structurally for free, since a lone
+    // bin's capacity IS the 100 cap — this fix is a no-op there).
+    const packed = bcWithinCap
       ? packBins(mandatory, optional, state.players, bagCapacityPerPlayer)
       : null;
     if (packed) {
@@ -1315,7 +1328,6 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
     // Either never attempted, or attempted with a structurally-unreachable
     // marked item — either way, no Buyer's Choice weighting applied to
     // packing. Pure value-max pack over everything eligible.
-    mandatoryWeightSum = 0;
     const packed = packBins([], eligible.map(toItem), state.players, bagCapacityPerPlayer);
     secondaryBagValue = packed.value;
     packedBags = packed.bags;
@@ -1382,8 +1394,16 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   // not allBuyerItemsFit) can never have packed every marked item anyway
   // — if it could, packBins() would have returned a non-null result for
   // the mandatory set in the first place.
+  //
+  // `&& bcWithinCap` added 2026-09-12: without Elite forcing packing,
+  // nothing stops the unconstrained value-max pack from happening to
+  // select every marked item even when their combined weight is over the
+  // flat 100 cap (plenty of crew capacity, no competing items) — but that
+  // combo is never actually achievable in-game (see bcWithinCap's doc
+  // comment above), so it must never earn the bonus just because the pack
+  // coincidentally included all of them.
   const allBuyerItemsPacked = bcIdsSet.size >= 2 && [...bcIdsSet].every(id => chosenIds.has(id));
-  const buyerRequestEarned = eliteEligible || (!attempted && allBuyerItemsPacked);
+  const buyerRequestEarned = eliteEligible || (!attempted && allBuyerItemsPacked && bcWithinCap);
   const buyerRequestBonusEach = buyerRequestEarned ? bonuses.buyerRequest : 0;
   const eliteBonusEach = eliteEligible ? bonuses.elitePerPlayer : 0;
   const planningFee = state.weekly === 'repeat' ? bonusConstants.repeatRunFee : 0;
@@ -1399,6 +1419,18 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
 
   const overflow = attempted && !allBuyerItemsFit;
 
+  // Elite-independent counterpart to `overflow` above (2026-09-12): true
+  // whenever 2+ reachable marked items are on the board and their combined
+  // weight breaks the flat 100 cap, regardless of the Elite toggle. When
+  // Elite IS attempted, this is already implied by `overflow` (attempted
+  // && !allBuyerItemsFit) — canLockMandatory requires bcIneligibleIds to
+  // be empty, and bcWithinCap being false forces allBuyerItemsFit false —
+  // so `overflow` alone already covers that case first. This field exists
+  // specifically for guide.html to also warn when Elite is off, where
+  // `overflow` is always false by definition but the Buyer's Request bonus
+  // can still be silently unearnable for the same underlying reason.
+  const bcOverCap = bcIdsSet.size >= 2 && bcIneligibleIds.length === 0 && !bcWithinCap;
+
   // packBins' items are shaped { id, value, weightUnits, floor } to match
   // knapsack()'s convention; translate to the { itemId, value, weight,
   // floor } shape the rest of the app (guide.html, tests) expects.
@@ -1411,7 +1443,7 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   return {
     secondaryBagValue, secondaryShareEach, buyerRequestBonusEach, eliteBonusEach,
     helperBonusEach, planningFee,
-    overflow, attempted, allBuyerItemsFit, mandatoryWeightSum, bcIneligibleIds,
+    overflow, bcOverCap, attempted, allBuyerItemsFit, mandatoryWeightSum, bcIneligibleIds,
     chosenIds, bcIdsSet, bags,
     shutterOperatorIndex, neededGalleryPresence,
     ineligibleCount: valid.length - eligible.length

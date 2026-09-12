@@ -659,6 +659,33 @@ confirmation dialog on unlock.
   explicitly at 2, 3, and 4 players (three weight-50 Buyer's Choice items,
   150 combined, all individually reachable — a genuine weight-cap
   failure, not a `bcIneligibleIds`/`minPlayers` one).
+  **Extended the same day: the flat cap also gates the Buyer's Request
+  bonus independently of the Elite toggle.** The fix above only reached
+  the `canLockMandatory` branch (`attempted`, i.e. Elite on) — but the
+  Buyer's Request bonus is earned whenever the chosen pack happens to
+  include every marked item, Elite or not (the 2026-08-07 decoupling
+  above). With Elite off, nothing constrains packing at all, so a crew
+  with enough capacity and no competing items can coincidentally select
+  every over-cap marked item anyway — and before this extension, that
+  silently earned the bonus for a combo that's never achievable in-game
+  (verified: 2 players, Elite off, 3 marked weight-50 items — all three
+  packed, `buyerRequestBonusEach` came back `50000` instead of `0`).
+  Fixed by hoisting `mandatoryWeightSum`/`bcWithinCap` out of the
+  `canLockMandatory` branch so they're computed unconditionally, and
+  gating `buyerRequestEarned`'s Elite-off clause on `bcWithinCap` too. A
+  new `bcOverCap` field (`bcIdsSet.size >= 2 && bcIneligibleIds.length
+  === 0 && !bcWithinCap`) exposes this Elite-independently for
+  `guide.html`, since `overflow` stays `false` by definition whenever
+  Elite is off (it's gated on `attempted`) and so can never surface this
+  on its own — `guide.html`'s warn-box gained a new branch keyed off
+  `r.bcOverCap` (checked after `r.overflow`, which already covers the
+  Elite-on case first) with its own message naming the Buyer's Request
+  impact specifically, since nothing is actually overweight in any real
+  bag here (the status stamp correctly stays "Feasible"). Extended
+  `test/optimizer.test.js` with the Elite-off/2,3,4-player counterpart to
+  the fix above, asserting the fixture genuinely packs all three marked
+  items (so the test exercises the real "coincidentally packed anyway"
+  shape) and that `buyerRequestBonusEach` still comes back `0`.
 - **Bag assignment follows a five-tier, value-preserving preference**
   (rewritten 2026-08-02, extended 2026-08-03, widened 2026-08-04, Vault
   tier added 2026-08-07, priority-floor processing order fixed 2026-08-09,

@@ -224,7 +224,40 @@ for (const players of [2, 3, 4]) {
     assert.deepEqual(r.bcIneligibleIds, [], 'this is a weight-cap failure, not a minPlayers one');
     assert.equal(r.allBuyerItemsFit, false, `combined Buyer's Choice weight (150) exceeds the 100 cap regardless of ${players}-player bag capacity`);
     assert.equal(r.overflow, true);
+    assert.equal(r.bcOverCap, true);
     assert.equal(r.buyerRequestBonusEach, 0, 'attempted but not fit -> always forfeited, even if the unconstrained fallback happens to still pack all three incidentally');
     assert.equal(r.eliteBonusEach, 0);
+  });
+}
+
+// Extended same day: the flat cap has to be enforced independently of the
+// Elite toggle too. The Buyer's Request bonus is earned whenever the chosen
+// pack happens to include every marked item, Elite or not (2026-08-07
+// decoupling) — with Elite off, nothing constrains packing, so a crew with
+// enough capacity can coincidentally select all 3 over-cap marked items
+// anyway (no competing items, no Elite forcing). Real bug found: before this
+// fix, that combo silently earned the Buyer's Request bonus even though it's
+// never actually achievable in-game. r.overflow stays false here by
+// definition (it's gated on `attempted`, which requires elite === 'yes') —
+// r.bcOverCap is the Elite-independent signal guide.html now checks instead.
+for (const players of [2, 3, 4]) {
+  test(`Buyer's Request bonus is never earned for 3 over-cap Buyer's Choice items even with Elite OFF at ${players} players (bcOverCap flags it since r.overflow can't)`, () => {
+    const state = stateWithElite('no', {
+      'B-A': { value: 100000, buyersChoice: true },
+      '1-E': { value: 100000, buyersChoice: true },
+      '1-F': { value: 100000, buyersChoice: true }
+    });
+    state.players = players;
+    const r = runOptimizer(state, catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);
+
+    assert.equal(r.attempted, false, 'Elite was never toggled on');
+    assert.equal(r.mandatoryWeightSum, 150);
+    assert.equal(r.overflow, false, 'overflow is gated on attempted, which is false here by construction');
+    assert.equal(r.bcOverCap, true, 'the Elite-independent flat-cap signal must still fire');
+    // Sanity: with ample crew capacity and nothing else scoped to compete,
+    // the unconstrained pack really does select all three, so this test
+    // actually exercises the "coincidentally packed anyway" bug shape.
+    assert.ok(['B-A', '1-E', '1-F'].every(id => r.chosenIds.has(id)), 'fixture must actually pack all three marked items for this test to mean anything');
+    assert.equal(r.buyerRequestBonusEach, 0, "Buyer's Request must never be earned for a combo that's never achievable in-game, even if the pack happened to include everything");
   });
 }
