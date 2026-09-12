@@ -1282,7 +1282,22 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
     const optional = eligible.filter(l => !l.buyersChoice).map(toItem);
     mandatoryWeightSum = mandatory.reduce((s, i) => s + i.weightUnits, 0);
 
-    const packed = packBins(mandatory, optional, state.players, bagCapacityPerPlayer);
+    // Flat cap, independent of crew size (real bug fix, 2026-09-12): Buyer's
+    // Choice items are collected as a single unit for Elite Challenge
+    // purposes, so their combined weight can never exceed one bag's
+    // capacity — confirmed directly, "it is not possible for the heist to
+    // have elite challenge items going over 100 weight, PERIOD, even if
+    // there are more than one player." packBins() alone doesn't know this:
+    // given 2+ players it's perfectly happy to spread the mandatory set
+    // across separate bins (e.g. 100 in one bag, 50 in another) and report
+    // that as a genuine fit, which is not how Buyer's Choice pickup
+    // actually works in-game. Checked BEFORE calling packBins() for the
+    // mandatory set so the cap holds at every crew size, not just solo
+    // (where packBins() already caught this structurally for free, since a
+    // lone bin's capacity IS the 100 cap — this fix is a no-op there).
+    const packed = mandatoryWeightSum <= bagCapacityPerPlayer
+      ? packBins(mandatory, optional, state.players, bagCapacityPerPlayer)
+      : null;
     if (packed) {
       allBuyerItemsFit = true;
       secondaryBagValue = packed.value;

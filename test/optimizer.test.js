@@ -193,3 +193,38 @@ test("a single incidentally-packed marked item still does not earn Buyer's Reque
   assert.ok(r.chosenIds.has('B-A'), 'the only scoped item is trivially packed');
   assert.equal(r.buyerRequestBonusEach, 0, 'a single marked item never satisfies the Buyer\'s Choice contract, Elite or not');
 });
+
+// Real bug fix, 2026-09-12: Buyer's Choice items are collected as a single
+// unit for Elite Challenge purposes, so their combined weight can never
+// exceed one bag's capacity (100) — confirmed directly, "it is not possible
+// for the heist to have elite challenge items going over 100 weight,
+// PERIOD, even if there are more than one player." Before this fix,
+// runOptimizer() called packBins() for the mandatory set against every
+// available bin, so at 2+ players a combined weight over 100 could still
+// come back as a "fit" (e.g. 100 in one bag, 50 in another) — silently
+// hiding the "Overweight" warning guide.html is supposed to show. The fix
+// checks the flat cap BEFORE calling packBins() for the mandatory set, so
+// this holds at every crew size, not just solo (where packBins() already
+// caught it for free, since a lone bin's capacity already IS the cap).
+for (const players of [2, 3, 4]) {
+  test(`3 Buyer's Choice items totaling 150 weight are flagged as overflow even at ${players} players (would otherwise fit split across bags)`, () => {
+    // B-A, 1-E, 1-F: three weight-50 items, all minPlayers 1 — reachable at
+    // every crew size tested here, so this is a genuine weight-cap failure,
+    // not a bcIneligibleIds (minPlayers) one.
+    const state = stateWithElite('yes', {
+      'B-A': { value: 100000, buyersChoice: true },
+      '1-E': { value: 100000, buyersChoice: true },
+      '1-F': { value: 100000, buyersChoice: true }
+    });
+    state.players = players;
+    const r = runOptimizer(state, catalog, BAG_CAPACITY_PER_PLAYER, DEFAULT_BONUS_CONSTANTS);
+
+    assert.equal(r.attempted, true);
+    assert.equal(r.mandatoryWeightSum, 150);
+    assert.deepEqual(r.bcIneligibleIds, [], 'this is a weight-cap failure, not a minPlayers one');
+    assert.equal(r.allBuyerItemsFit, false, `combined Buyer's Choice weight (150) exceeds the 100 cap regardless of ${players}-player bag capacity`);
+    assert.equal(r.overflow, true);
+    assert.equal(r.buyerRequestBonusEach, 0, 'attempted but not fit -> always forfeited, even if the unconstrained fallback happens to still pack all three incidentally');
+    assert.equal(r.eliteBonusEach, 0);
+  });
+}

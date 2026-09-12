@@ -636,6 +636,29 @@ confirmation dialog on unlock.
   reachable marked items aren't force-included either, since forfeiture
   is already locked in and forcing them could only cost bag value for a
   bonus that can't pay out.
+  **Real bug fix, 2026-09-12: combined Buyer's Choice weight is capped at
+  100 (one bag), full stop — regardless of crew size.** Confirmed
+  directly: "it is not possible for the heist to have elite challenge
+  items going over 100 weight, PERIOD, even if there are more than one
+  player." Before this fix, `runOptimizer()` called `packBins()` for the
+  mandatory set against every one of the crew's bins, so at 2+ players a
+  combined mandatory weight over 100 could still come back as a "fit"
+  (e.g. 100 in the host's bag, 50 in a teammate's) — `allBuyerItemsFit`
+  came back `true` and `guide.html`'s "Overweight" warning silently
+  stopped appearing the moment a crew had more than one player, even
+  though this combo is never actually legal in-game. Buyer's Choice items
+  are collected as a single unit for Elite Challenge purposes; splitting
+  them across separate players' bags was never how the mechanic works,
+  regardless of what `packBins()`'s general-purpose multi-bin search can
+  technically find room for. Fixed by checking `mandatoryWeightSum >
+  bagCapacityPerPlayer` (100) BEFORE calling `packBins()` for the
+  mandatory set at all, unconditionally — a no-op at 1 player (where
+  `packBins()` already caught this for free, since a lone bin's capacity
+  already IS the 100 cap), but now correctly forces the same forfeiture
+  path at every crew size. `test/optimizer.test.js` covers this
+  explicitly at 2, 3, and 4 players (three weight-50 Buyer's Choice items,
+  150 combined, all individually reachable — a genuine weight-cap
+  failure, not a `bcIneligibleIds`/`minPlayers` one).
 - **Bag assignment follows a five-tier, value-preserving preference**
   (rewritten 2026-08-02, extended 2026-08-03, widened 2026-08-04, Vault
   tier added 2026-08-07, priority-floor processing order fixed 2026-08-09,
