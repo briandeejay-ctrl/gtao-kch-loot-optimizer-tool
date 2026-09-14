@@ -1695,8 +1695,8 @@ items it links to for full design detail):**
 Recommended build order: 1 → 2 → 3, then a design pass for 4, then 5 and
 6 together.
 
-**Item 7, raised 2026-09-12, for investigation — not yet designed or
-estimated.** Prompted directly by that day's two Buyer's Choice
+**Item 7, raised 2026-09-12, design settled 2026-09-14 — not yet
+estimated or built.** Prompted directly by that day's two Buyer's Choice
 weight-cap bug fixes (see `runOptimizer()`'s flat-cap entries under "Core
 logic" above): dynamically compute combined Buyer's Choice weight on the
 scope-entry pages themselves (`index.html`'s loot list, `map-scope.html`'s
@@ -1713,23 +1713,36 @@ runtime model now enforces.
   `mandatoryWeightSum` logic `runOptimizer()` already computes) that both
   pages call from their own render code, per the established
   "duplicate-don't-share render, share pure logic" convention.
-- **Open design question:** should the weight sum used for lockout count
-  every marked item, or only ones reachable at the crew's current player
-  count (mirroring `runOptimizer()`'s own `bcWithinCap`, which only sums
-  `eligible` — i.e. reachable — items)? `index.html` knows `state.players`
-  at scope time, so this is answerable, but changes the lockout's exact
-  boundary.
-- **Open design question:** unlike today's single `bcCount >= 3` boolean,
-  a weight-based lockout is necessarily per-item (a heavy item can push
-  over the cap while a lighter one still fits) — every render pass would
-  need to check each not-yet-marked item's own weight against the
-  remaining headroom, not just reuse one shared flag.
-- **Open design question:** silent disable only (matching today's
-  3-item cap, which shows no running counter), or a visible "80/100"-style
-  weight readout so a host understands *why* a row is locked, not just
-  that it is?
+- **Settled: count every marked item, regardless of reachability —
+  deliberately NOT mirroring `runOptimizer()`'s reachability-filtered
+  `bcWithinCap`.** Confirmed with the user 2026-09-14: crew size isn't
+  reliably known yet at scope-entry time (it can be decided after the
+  loot's already scoped — see the 2026-08-13 step-reorder note under
+  `index.html`'s Pages entry above, which moved Crew Size specifically
+  because of this), so player-count-based reachability has no bearing on
+  Buyer's Choice scoping at all — only on the later bag-pack calculation.
+  This means `buyersChoiceWeightSum()` must NOT take `state.players` (or
+  reachability) into account at all — a simpler function than
+  `runOptimizer()`'s own weight sum, not a port of it.
+- Necessarily per-item, unlike today's single `bcCount >= 3` boolean: a
+  heavy item can push over the cap while a lighter one still fits, so
+  every render pass needs each not-yet-marked item's own weight checked
+  against the remaining headroom (`buyersChoiceWeightSum(...) + cat.weight
+  > 100`), not just one shared flag.
+- **Settled: silent disable only, no visible running-weight readout** —
+  matches today's existing 3-item cap exactly (no counter shown
+  anywhere), confirmed 2026-09-14.
+- **Settled: `map-scope.html`'s entry dialog only needs the same
+  checkbox-gating treatment as `index.html`'s rows and the pin list** —
+  no extra live-typing feedback inside the dialog itself, confirmed
+  2026-09-14.
 - **Not a replacement for the runtime `bcOverCap`/flat-cap checks shipped
   2026-09-12** — those should stay regardless as a defense-in-depth
   backstop (e.g. an older saved scope-out from before this UI lockout
   existed, or a future imported/shared-link scope-out — see backlog item
-  3 — that never passed through this page's own gating at all).
+  3 — that never passed through this page's own gating at all). Also
+  still needed because this lockout deliberately ignores reachability
+  (see above) while the runtime check doesn't — a combo that's
+  weight-valid-but-reachability-invalid, or reachability-valid-but-only-
+  weight-invalid-at-the-eventually-chosen-crew-size, can still only be
+  caught after Submit.
