@@ -376,23 +376,35 @@ All four pages are `type="module"` and `import` directly from
 `js/kch-model.js` (no separate `<script src>` tag for it). Shared visual
 styling lives in `css/kch-styles.css`, linked from all four.
 
-**Top/bottom page nav (2026-09-15).** Every page now carries a
-`.page-nav` block (new shared CSS class, right next to `.back-link` in
+**Top/bottom page nav (2026-09-15, index.html's pulled 2026-09-16 — see
+below).** `map-scope.html`, `guide.html`, and `map-view.html` each carry
+a `.page-nav` block (shared CSS class, right next to `.back-link` in
 `kch-styles.css`) directly under `.header` and again right above the
 footnote/at the very end of the page — plain `<a class="back-link">`
-links, `.no-print`, no JS. Purely additive: the existing mid-page CTAs
-(index.html's Step 2 "Prefer tapping a map?" gateway, guide.html's "Map
-View →" gateway) are untouched, since those carry their own contextual
-placement rationale documented where they're introduced above. Link
-graph: `index.html` ⇄ `map-scope.html`; `guide.html` ⇄ `index.html`
-(back only) and `guide.html` ⇄ `map-view.html`; `map-view.html` →
-`guide.html` only. **`index.html` deliberately has no forward nav link
-to `guide.html`** — "a single Submit button is the only way to reach
-Page 2" (this section, above) is a deliberate gate, not an oversight to
-fix by adding a casual shortcut here. guide.html's old bottom-only
-"← Back to Edit" link was relabeled "← Back to Scope & Setup" to match
-its new top-nav twin and map-scope.html's own wording, rather than
-carrying two different labels for the same destination.
+links, `.no-print`, no JS. Link graph: `guide.html` ⇄ `index.html` (back
+only) and `guide.html` ⇄ `map-view.html`; `map-view.html` → `guide.html`
+only; `map-scope.html` → `index.html` only (see below for why its other
+direction isn't a `.page-nav` block). **`index.html` deliberately has no
+forward nav link to `guide.html`** — "a single Submit button is the only
+way to reach Page 2" (this section, above) is a deliberate gate, not an
+oversight to fix by adding a casual shortcut here. guide.html's old
+bottom-only "← Back to Edit" link was relabeled "← Back to Scope &
+Setup" to match its new top-nav twin and map-scope.html's own wording,
+rather than carrying two different labels for the same destination.
+
+**index.html's own top/bottom `.page-nav` blocks (to `map-scope.html`)
+were removed again the next day, 2026-09-16, user call.** They shipped
+2026-09-15 as part of the same pass as the other three pages, giving
+index.html three near-identical "go to Map Scope-Out" controls at once
+(top nav, the Step 2 "Prefer tapping a map?" gateway, bottom nav) — the
+user judged that redundant specifically on this page: the Step 2 gateway
+already sits right at the loot chart, closer to the actual decision
+point, and a user who's scrolled to the bottom (past Submit) is done
+filling the form, not casually browsing for a nav shortcut. index.html
+is therefore the one page of the four with no `.page-nav` block at all —
+the Step 2 gateway button remains its only way to reach `map-scope.html`.
+`map-scope.html`'s own nav back to `index.html` is untouched (top +
+bottom, unchanged).
 
 ## Data model
 - `data/primary-targets.json` — primary painting payouts. Only a base value is
@@ -1009,11 +1021,31 @@ confirmation dialog on unlock.
   applies regardless of Elite status (confirmed with the user 2026-08-07:
   it's a Buyer's-Choice-contract minimum, not an Elite-specific one), so a
   single incidentally-packed marked item still never earns it. The Elite
-  Challenge bonus itself is **not** decoupled — it still requires the
-  toggle, since completing it depends on live-execution conditions (the
-  clock) this tool can't verify from bag contents alone, unlike simply
-  having grabbed the marked items. `runOptimizer()`'s `buyerRequestBonusEach`
-  reflects this; `eliteBonusEach` is untouched.
+  Challenge bonus **actually earning its dollar amount** is **not**
+  decoupled — it still requires live execution (the clock) this tool
+  can't verify from bag contents alone, unlike simply having grabbed the
+  marked items, so it's never added to Payout regardless of the toggle.
+  **`eliteBonusEach`'s gating for the informational note is a different
+  question, and was corrected 2026-09-16** (see the dated bullet directly
+  below) — it originally stayed hard-gated behind the toggle itself
+  (`eliteEligible`, i.e. `attempted && allBuyerItemsFit`), which
+  conflated "the toggle wasn't on" with "Elite wasn't achievable." Those
+  aren't the same thing: whether a crew can *go for* Elite live has
+  nothing to do with whether they ticked this planning tool's checkbox —
+  it only depends on whether every marked item is genuinely sitting in
+  one reachable, under-cap bag, exactly the same condition
+  `buyerRequestEarned` already checks. `eliteBonusEach` now tracks
+  `buyerRequestEarned` directly (a strict widening: every case that used
+  to earn it still does, plus the untoggled-but-coincidentally-packed
+  case) rather than `eliteEligible`, so `guide.html`'s "+$X if Elite
+  Challenge succeeds" note (see `computeGuidePayout()`'s entry below)
+  surfaces whenever the bonus is genuinely realizable, not only when the
+  toggle happened to be on. `computeGuidePayout()` itself is untouched —
+  Payout's actual dollar total still never counts `eliteBonusEach` either
+  way, toggle or not; only the note's visibility changed.
+  `test/optimizer.test.js`'s "Buyer's Request bonus is earned with Elite
+  off..." regression test was updated in place to assert the new
+  behavior rather than the old hard-gating.
 - **Buyer's Request, Elite Challenge, and Helper bonuses all double on
   Hard mode**: $50k Buyer's Request / $50k-per-player Elite / $100k
   Helper on Normal, $100k / $100k-per-player / $200k on Hard.

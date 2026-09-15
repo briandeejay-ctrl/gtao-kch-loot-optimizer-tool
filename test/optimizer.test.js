@@ -154,7 +154,7 @@ function stateWithElite(elite, overrides) {
   };
 }
 
-test("Buyer's Request bonus is earned with Elite off when the unconstrained pack happens to include every marked item", () => {
+test("Buyer's Request bonus is earned with Elite off when the unconstrained pack happens to include every marked item, and the Elite dollar figure surfaces too (2026-09-16)", () => {
   // B-A and B-B are both Vault, weight 50, minPlayers 1 — with nothing
   // else scoped, both trivially fit together in one 100-capacity bag, so
   // the value-max unconstrained pack (Elite off) includes both anyway.
@@ -166,7 +166,16 @@ test("Buyer's Request bonus is earned with Elite off when the unconstrained pack
   assert.equal(r.attempted, false, 'Elite was never toggled on');
   assert.ok(r.chosenIds.has('B-A') && r.chosenIds.has('B-B'), 'both marked items should be packed');
   assert.ok(r.buyerRequestBonusEach > 0, 'Buyer\'s Request should be earned even though Elite was never attempted');
-  assert.equal(r.eliteBonusEach, 0, 'Elite bonus stays gated behind the toggle, unaffected by this decoupling');
+  // 2026-09-16 correction: eliteBonusEach used to stay hard-gated behind the
+  // toggle regardless of this decoupling. That conflated "the toggle wasn't
+  // on" with "Elite wasn't achievable" — a crew that never checked the box
+  // can still go for Elite live if every marked item is sitting in one
+  // reachable, under-cap bag anyway. This field only ever feeds guide.html's
+  // informational "+$X if Elite Challenge succeeds" note (never Payout's
+  // actual total, which still never counts it), so it now tracks
+  // buyerRequestEarned exactly, Elite-toggle or not.
+  assert.ok(r.eliteBonusEach > 0, 'the Elite dollar figure should surface whenever Buyer\'s Request is earned, even with the toggle off');
+  assert.equal(r.eliteBonusEach, DEFAULT_BONUS_CONSTANTS.elitePerPlayerNormal, 'sanity: matches the normal-mode per-player Elite figure');
 });
 
 test("Buyer's Request bonus is NOT earned with Elite off when the unconstrained pack excludes one marked item", () => {

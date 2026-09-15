@@ -1405,7 +1405,24 @@ export function runOptimizer(state, catalog, bagCapacityPerPlayer, bonusConstant
   const allBuyerItemsPacked = bcIdsSet.size >= 2 && [...bcIdsSet].every(id => chosenIds.has(id));
   const buyerRequestEarned = eliteEligible || (!attempted && allBuyerItemsPacked && bcWithinCap);
   const buyerRequestBonusEach = buyerRequestEarned ? bonuses.buyerRequest : 0;
-  const eliteBonusEach = eliteEligible ? bonuses.elitePerPlayer : 0;
+  // 2026-09-16 correction: `eliteBonusEach` used to require `eliteEligible`
+  // specifically (i.e. the toggle itself), on the theory that Elite success
+  // depends on live-execution conditions this tool can't verify from bag
+  // contents alone. That's still true of whether the bonus is ACTUALLY
+  // earned — but it conflated "the toggle wasn't on" with "Elite wasn't
+  // achievable," which isn't the same thing: a crew that never checked the
+  // Elite box can still walk up to the console and go for it live if every
+  // marked item happens to be sitting in one reachable bag anyway. This
+  // field only ever feeds guide.html's informational "+$X if Elite
+  // Challenge succeeds — depends on live execution" note (never Payout's
+  // actual total, which still never counts it either way), so gating it on
+  // `buyerRequestEarned` instead — true whenever every marked item ended up
+  // packed under the flat weight cap, Elite-toggle or not — surfaces that
+  // number whenever it's genuinely realizable, not only when the planning
+  // toggle happened to be on. `buyerRequestEarned` already IS exactly
+  // `eliteEligible` OR'd with the untoggled-but-coincidentally-packed case,
+  // so this is a strict widening, never a narrowing, of when the note shows.
+  const eliteBonusEach = buyerRequestEarned ? bonuses.elitePerPlayer : 0;
   const planningFee = state.weekly === 'repeat' ? bonusConstants.repeatRunFee : 0;
   // Every player's secondary-loot cut is the SAME number — the pooled
   // total split evenly across the whole crew — regardless of which bag
