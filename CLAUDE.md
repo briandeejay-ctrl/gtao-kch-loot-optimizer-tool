@@ -93,8 +93,12 @@ entirely through `localStorage` (no view-swap, no SPA framework):
   `MAP_SCOPE_ENABLED` const, the exact same kill-switch pattern as
   `guide.html`'s `MAP_VIEW_ENABLED` (flip to `true` and redeploy to show
   the button; direct navigation to `map-scope.html` always works
-  regardless). **Shipped `false`**: the page needs real-world debugging
-  via direct URL first, before it's discoverable from this page.
+  regardless). **Shipped `false`**: the page needed real-world debugging
+  via direct URL first, before it was discoverable from this page.
+  **Flipped `true` 2026-09-15** — user validated the page directly (via
+  the live GitHub Pages URL, `map-scope.html`) and confirmed it's working
+  correctly; the gateway button is now discoverable from Step 2 like any
+  other feature.
   **Advanced Settings accordion (2026-08-23), after Step 5, before
   Submit.** A native `<details class="step advanced-settings">` — no
   existing accordion precedent in the app before this, chosen because it
@@ -298,7 +302,8 @@ Loading Bay note onto Vault's art would misrepresent the routing.
   **permanent alt-path** to `index.html`'s Step 2 loot chart — tap a pin
   on the real floor art instead of scrolling the flat list — reached via
   the gateway button described in `index.html`'s entry above (behind
-  `MAP_SCOPE_ENABLED`, shipped `false`) and a "← Back to Scope & Setup"
+  `MAP_SCOPE_ENABLED`, shipped `false`, flipped `true` 2026-09-15 after
+  user validation) and a "← Back to Scope & Setup"
   link back. Graduated from a scratchpad prototype (evaluated over
   several sessions, never git-tracked) once every open design question
   was settled; see `internal/model-notes.md`-style history in project

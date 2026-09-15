@@ -171,8 +171,11 @@ const FEEDBACK_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSde7tKREst9V
 // MAP_VIEW_ENABLED. Flip to true and redeploy once map-scope.html is ready
 // for general discovery; direct navigation to map-scope.html itself always
 // works regardless of this flag — it only gates the button here. Shipped
-// false: the page needs real-world debugging via direct URL first.
-const MAP_SCOPE_ENABLED = false;
+// false: the page needed real-world debugging via direct URL first.
+// Flipped true 2026-09-15 — user validated the page directly (see
+// map-scope.html's own Pages entry above) and is satisfied it's ready for
+// general discovery.
+const MAP_SCOPE_ENABLED = true;
 
 // ---------- STATE ----------
 let state = null;    // page1 fields + loot, hydrated from localStorage (or defaults)
