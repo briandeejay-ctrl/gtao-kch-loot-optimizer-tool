@@ -376,6 +376,24 @@ All four pages are `type="module"` and `import` directly from
 `js/kch-model.js` (no separate `<script src>` tag for it). Shared visual
 styling lives in `css/kch-styles.css`, linked from all four.
 
+**Top/bottom page nav (2026-09-15).** Every page now carries a
+`.page-nav` block (new shared CSS class, right next to `.back-link` in
+`kch-styles.css`) directly under `.header` and again right above the
+footnote/at the very end of the page — plain `<a class="back-link">`
+links, `.no-print`, no JS. Purely additive: the existing mid-page CTAs
+(index.html's Step 2 "Prefer tapping a map?" gateway, guide.html's "Map
+View →" gateway) are untouched, since those carry their own contextual
+placement rationale documented where they're introduced above. Link
+graph: `index.html` ⇄ `map-scope.html`; `guide.html` ⇄ `index.html`
+(back only) and `guide.html` ⇄ `map-view.html`; `map-view.html` →
+`guide.html` only. **`index.html` deliberately has no forward nav link
+to `guide.html`** — "a single Submit button is the only way to reach
+Page 2" (this section, above) is a deliberate gate, not an oversight to
+fix by adding a casual shortcut here. guide.html's old bottom-only
+"← Back to Edit" link was relabeled "← Back to Scope & Setup" to match
+its new top-nav twin and map-scope.html's own wording, rather than
+carrying two different labels for the same destination.
+
 ## Data model
 - `data/primary-targets.json` — primary painting payouts. Only a base value is
   stored per painting; hard mode and first-week are the only two clean

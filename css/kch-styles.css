@@ -702,6 +702,19 @@ dialog.feedback-dialog{
 }
 .back-link:hover{border-color:var(--gold-dim); color:var(--gold);}
 
+/* Top/bottom page-to-page nav (2026-09-15) — wraps one or more
+   .back-link pills. Shared CSS only, same convention as .back-link/
+   .map-view-btn already being shared while render/JS stays duplicated
+   per page. */
+.page-nav{
+  display:flex;
+  gap:10px;
+  justify-content:center;
+  flex-wrap:wrap;
+}
+.page-nav-top{margin:0 0 20px;}
+.page-nav-bottom{margin:20px 0 0;}
+
 .btn-gold{
   background:var(--gold);
   border:1px solid var(--gold);
