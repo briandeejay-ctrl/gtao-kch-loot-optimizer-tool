@@ -12,7 +12,7 @@
   <div class="header">
     <p class="eyebrow">Case File · Kortz Center Heist</p>
     <h1>Loot Ledger — Scope &amp; Setup</h1>
-    <p class="sub">Scope your secondary targets, set your crew and difficulty, then submit to generate your Heist Guide. Everything here autosaves as you go — refresh, close the browser, or come back later and it'll still be here.</p>
+    <p class="sub">Scope your secondary targets, set your crew and difficulty, then submit to generate your Heist Guide. Everything here autosaves: refresh, close the browser, or come back later and it'll still be here.</p>
     <div class="header-actions">
       <button type="button" id="clearBtn" class="clear-btn">Clear Board</button>
       <button type="button" id="copyCsvBtn" class="copy-btn">Copy as CSV</button>
@@ -71,7 +71,7 @@
       <div class="no-print" id="mapScopeGateway" style="margin:0 0 14px;">
         <button type="button" id="mapScopeBtn" class="map-view-btn">Prefer tapping a map? Try Map Scope-Out →</button>
       </div>
-      <p class="hint">Every item you can scope is listed below by floor. Fill in the value for what you actually photographed and leave the rest blank. Mark up to <b>three</b> as Buyer's Choice by clicking the item — with Elite Challenge (below) on, these are packed first; with it off, the Buyer's Request bonus still pays out if they end up packed anyway. The Delivery Truck Crate's value can't be known until you grab it, so it's a checkbox that locks in a fixed planning estimate. The Crisp Gallery gemstone varies each run — pick its type from the dropdown; that's a label only and doesn't affect the math.</p>
+      <p class="hint">Every lootable item is listed below by floor. Fill in values for what you actually scoped and leave the rest blank. Mark up to <b>three</b> as Buyer's Choice by clicking the item. The Delivery Truck Crate's value is unknown until it's actually looted, so checking its box locks in a fixed planning estimate — but only if the truck is actually there during your scope-out. The Crisp Gallery gemstone can vary each run — the dropdown is just there to help you track which one it was; it's a label only and doesn't affect the math.</p>
       <div class="loot-list" id="lootList"></div>
     </div>
   </div>
@@ -85,7 +85,7 @@
         <div class="toggle-btn" data-val="no">No</div>
         <div class="toggle-btn" data-val="yes">Yes</div>
       </div>
-      <p class="hint">If yes, the ledger locks in your Buyer's Choice items first — the Buyer's Request and Elite Challenge bonuses are only in play if at least 2 items are marked (a single item can never satisfy the challenge) and every marked item actually fits (and is reachable by your crew size). If no, Buyer's Choice picks aren't forced into packing and the ledger optimizes purely for maximum bag value — but the Buyer's Request bonus (not Elite's) still pays out if that best-value pack happens to include all your marked picks anyway.</p>
+      <p class="hint">If yes, your Buyer's Choice items are packed first — the Buyer's Request and Elite Challenge bonuses are only in play if at least two are marked and every one of them actually fits and is reachable by your crew size. If no (or those conditions aren't met), Buyer's Choice items aren't forced into packing and the ledger optimizes purely for maximum bag value — but the Buyer's Request bonus (not Elite's) still pays out if that best-value pack happens to include everything you marked anyway.</p>
     </div>
   </div>
 
@@ -108,7 +108,7 @@
   <div class="step">
     <span class="step-num">5</span><span class="step-title">Crew Names (Optional)</span>
     <div class="step-body">
-      <p class="hint">Label each player's card on the Heist Guide page. Leave any of these blank to just show "Player 1", "Player 2", etc. Player 1 is always the host. Every other player automatically earns the Helper bonus ($100,000 Normal / $200,000 Hard) on top of their secondary loot share — this isn't something you toggle here.</p>
+      <p class="hint">Label each player's card on the Heist Guide page. Leaving these blank defaults to "Player 1", "Player 2", etc. Player 1 is always the host. Every other player automatically earns the Helper bonus ($100,000 Normal / $200,000 Hard) on top of their secondary loot share.</p>
       <div class="row2" id="playerNamesList"></div>
     </div>
   </div>
@@ -121,12 +121,12 @@
         <input type="checkbox" id="skipGlassCutterCheck">
         Skip Glass Cutter prep
       </label>
-      <p class="hint">Excludes items that need the Glass Cutter prep from the optimizer entirely, for a run where that prep wasn't actually done. Off by default — the optimizer otherwise assumes every prep is done, same as before this setting existed.</p>
+      <p class="hint">Excludes items that need the Glass Cutter prep from the optimizer, for runs where that prep was skipped. Off by default.</p>
       <label class="adv-check-wrap">
         <input type="checkbox" id="experimentalPackingCheck">
         Experimental: time-optimized packing
       </label>
-      <p class="hint">Tries to balance loot-time and floor travel between players (Alarm Floor/First/Second/Crisp Gallery only) instead of just maximizing bag value placement, on the Heist Guide's "Who Grabs What." Doesn't change which items get chosen or your total secondary value — only who carries what.</p>
+      <p class="hint">Tries to balance loot-time and floor travel between players (excluding Vault and Loading Bay) when assigning items on the Heist Guide's "Who Grabs What" — doesn't change which items are chosen or your total secondary value, only who carries what.</p>
     </div>
   </details>
 
